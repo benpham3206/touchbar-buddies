@@ -132,6 +132,12 @@ The helper script, if you want to drive it yourself (run it inside the folder):
 ./install.sh               # keep your version: it starts at every login
 ```
 
+## Something wrong?
+
+Run `./tbb doctor` inside `~/touchbar-buddies` and paste the output into an issue, or ask Claude Code /
+Codex to run it and fix what it finds. It lists what's installed, the permission state, and any stutters
+the app logged.
+
 ## Uninstall
 
 ```sh

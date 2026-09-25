@@ -23,6 +23,7 @@ Touch Bar Buddies helper
   ./tbb shot [out.png]       screenshot the real Touch Bar
   ./tbb logs                 follow the app's log
   ./tbb sprites              rebuild the sprite cache from your Claude / ChatGPT apps
+  ./tbb doctor               a health report to paste into a bug report (or hand to Claude / Codex)
 
 To keep your changes after a restart, install them: ./install.sh
 EOF
@@ -105,6 +106,23 @@ case ${1:-help} in
     build_if_needed
     "$BIN" --build-sprites
     print "Restart to use them: ./tbb run (or menu bar icon > Rebuild Sprites)"
+    ;;
+  doctor)
+    # Everything needed to debug someone else's Mac, in one paste.
+    SPRITES="$HOME/Library/Application Support/TouchBarBuddies/sprites"
+    print "== Touch Bar Buddies doctor"
+    print "Mac:      $(sysctl -n hw.model), macOS $(sw_vers -productVersion) ($(uname -m))"
+    print "Touch Bar: $(pgrep -x TouchBarServer >/dev/null && echo yes || echo 'not found')"
+    print "Running:  $(ps -o comm= -p "$(pgrep -x TouchBarBuddies | head -1)" 2>/dev/null || echo 'no')"
+    print "Login item: $([[ -f ~/Library/LaunchAgents/dev.touchbarbuddies.plist ]] && echo installed || echo none)"
+    print "Claude app: $(mdfind "kMDItemCFBundleIdentifier == 'com.anthropic.claudefordesktop'" | head -1)"
+    print "Codex app:  $(mdfind "kMDItemCFBundleIdentifier == 'com.openai.codex'" | head -1)"
+    print "Sprites:  $(ls "$SPRITES/clawd" 2>/dev/null | tr '\n' ' ')$(ls "$SPRITES/codex" 2>/dev/null)"
+    touch "$LOG"
+    print "Permission: $(grep '\[permissions\]' "$LOG" | tail -1 | sed 's/.*: //')"
+    print "Late frames ([hitch]) in the log: $(grep -c '\[hitch\]' "$LOG"), slow draws: $(grep -c '\[slow-draw\]' "$LOG")"
+    print "\n== Last 25 log lines"
+    tail -n 25 "$LOG"
     ;;
   *)
     usage

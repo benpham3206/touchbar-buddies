@@ -58,6 +58,8 @@ final class Buddy {
   var pose: Base { playing ? .idle : base }
   var home: CGFloat { pocket.midX + (who == .clawd && base == .work ? -5 : 0) }
   var inPocket: Bool { abs(x - pocket.midX) < pocket.width / 2 + 4 }
+  /// Where the buddy's current frame was last drawn (a kart or cloud is much wider than the buddy himself).
+  var drawnRect = CGRect.zero
 
   /// Out on the bar, away from its pocket. Hiding behind the button next to it doesn't count: then nothing of it
   /// is drawn outside the pocket.
@@ -201,6 +203,10 @@ final class Scene {
   var drawsOutsidePockets: Bool {
     if pace == .fast { return true }
     let areas = redrawAreas
+    // Judge by what was actually drawn: a parked kart can hang over the next button even with Clawd "home".
+    if [clawd, codex].contains(where: { b in !b.drawnRect.isEmpty && !areas.contains { $0.contains(b.drawnRect.insetBy(dx: 0.5, dy: 0.5)) } }) {
+      return true
+    }
     return particles.contains { p in !areas.contains { $0.contains(CGPoint(x: p.x, y: min(p.y, 29))) } }
   }
 
@@ -1499,6 +1505,7 @@ final class Scene {
     drawUltraGlow(b, ctx)
     if b.who == .clawd && b.state.ultra { clip = bank.violet(clip) }
     clip.draw(frame, in: ctx, x: drawX, y: ground + b.hop, mirror: mirror, alpha: alpha, squashY: squash)
+    b.drawnRect = CGRect(x: drawX - clip.anchorX, y: 0, width: clip.size.width, height: 30)
     if let item = b.carry { draw(item, at: carryPoint(b), size: 1, alpha: 1, flip: false, outline: true, ctx) }
     if b.step?.clipRect != nil && (b.step?.run == true || b.step?.clip != nil) { ctx.restoreGState() }
 

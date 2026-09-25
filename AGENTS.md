@@ -199,6 +199,12 @@ Add rows to `Sprite` in `PixelArt.swift` (`#` = filled) and a color to `Palette`
 
 ## Logs
 
+**Start with `./tbb doctor`**: Mac model, macOS, whether the app/login item/apps/sprites are there, the
+Accessibility state, how many late frames were logged, and the last log lines. Performance markers in the log:
+`[hitch] frame N ms late at F fps` (the main thread was blocked; find what ran then) and `[slow-draw] N ms`
+(drawing one frame took too long; look at what was on screen). Don't block the main thread: slow work
+(files, process scans, CoreAudio) belongs on a background queue, with results handed back to main.
+
 `./tbb logs` follows `~/Library/Logs/TouchBarBuddies.log`. The LaunchAgent and `./tbb run` send the app's
 output there. Sprite building logs `[sprites] …` lines. `TBB_DEBUG=1 ./tbb run` also logs the
 busy/idle sampling every second (`[activity] …`). `TBB_SPRITES_DIR=/some/dir` points the app at another

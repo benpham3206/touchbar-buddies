@@ -263,12 +263,45 @@ final class StripView: NSView {
 
   override func draw(_ dirtyRect: NSRect) {
     guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+    let started = CACurrentMediaTime()
+    defer {
+      let ms = (CACurrentMediaTime() - started) * 1000
+      if ms > 12 { NSLog("[slow-draw] %.0f ms", ms) }   // a frame at 60 fps has ~16 ms in total
+    }
     ctx.setFillColor(CGColor.black)
     ctx.fill(bounds)
     if let p = popover {
       p.draw(ctx, now: CACurrentMediaTime())
       return
     }
+    if let img = buttonsImage() {
+      ctx.interpolationQuality = .none
+      ctx.draw(img, in: bounds)
+    } else {
+      drawButtons(ctx)
+    }
+    scene.draw(ctx)
+  }
+
+  /// The buttons rarely change, so they're drawn once into an image and reused every frame (cheap full redraws
+  /// while buddies cross the bar). Redrawn only when a button is pressed, the volume icon or the layout changes.
+  private var buttonsCache: (key: String, image: CGImage)?
+
+  private func buttonsImage() -> CGImage? {
+    let key = "\(bounds.size)|\(pressed ?? -1)|\(volumeIcon)|\(buttons.count)"
+    if let c = buttonsCache, c.key == key { return c.image }
+    guard bounds.width > 0,
+          let bitmap = CGContext(data: nil, width: Int(bounds.width * 2), height: Int(bounds.height * 2), bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    bitmap.scaleBy(x: 2, y: 2)
+    drawButtons(bitmap)
+    guard let img = bitmap.makeImage() else { return nil }
+    buttonsCache = (key, img)
+    return img
+  }
+
+  private func drawButtons(_ ctx: CGContext) {
     for (i, b) in buttons.enumerated() {
       ctx.setFillColor(pressed == i ? Self.pressedColor : Self.buttonColor)
       ctx.addPath(CGPath(roundedRect: b.rect, cornerWidth: 6, cornerHeight: 6, transform: nil))
@@ -276,7 +309,6 @@ final class StripView: NSView {
       ctx.interpolationQuality = .high
       ctx.draw(Icons.image(b.action == .volume ? volumeIcon : b.icon), in: CGRect(x: b.rect.midX - 36, y: 0, width: 72, height: 30))
     }
-    scene.draw(ctx)
   }
 
   // MARK: Touches

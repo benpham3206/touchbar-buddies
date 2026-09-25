@@ -47,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     // After the bar is up (so it appears sooner): save the button glyphs for `--render`, even inside a sandbox.
     DispatchQueue.main.async { Icons.saveAll() }
     logAccessibility()
+    // Pick up the Accessibility switch being flipped in System Settings (logged; the menu shows ✓).
+    Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.logAccessibility() }.tolerance = 1
 
     // The buddies follow their apps: asleep when closed, typing while busy.
     monitor.onChange = { [weak self] claude, codex in
@@ -175,8 +177,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     menu.addItem(item("Visits Across the Bar", #selector(toggleRoaming), on: scene.roaming))
     menu.addItem(item("Pretend Claude Is Working", #selector(toggleClaudeWork), on: monitor.pretendWorking[.claude] == true))
     menu.addItem(item("Pretend Codex Is Working", #selector(toggleCodexWork), on: monitor.pretendWorking[.codex] == true))
-    menu.addItem(item("Pretend Ultracode (Claude)", #selector(toggleClaudeUltra), on: monitor.pretendUltra[.claude] == true))
-    menu.addItem(item("Pretend Ultra (Codex)", #selector(toggleCodexUltra), on: monitor.pretendUltra[.codex] == true))
+    let ultra = NSMenu()
+    ultra.addItem(item("Clawd: Ultracode", #selector(toggleClaudeUltra), on: monitor.pretendUltra[.claude] == true))
+    ultra.addItem(item("Codex: Ultra", #selector(toggleCodexUltra), on: monitor.pretendUltra[.codex] == true))
+    let ultraItem = NSMenuItem(title: "Ultra Mode", action: nil, keyEquivalent: "")
+    ultraItem.submenu = ultra
+    menu.addItem(ultraItem)
     menu.addItem(.separator())
     logAccessibility()
     if SystemControls.hasAccessibility {
