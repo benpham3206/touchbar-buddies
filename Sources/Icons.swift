@@ -36,11 +36,16 @@ enum Icons {
     for icon in Icon.allCases { _ = image(icon) }
   }
 
+  /// PNG encoding and disk writes happen in the background so the Touch Bar's animation never waits on them.
+  private static let saver = DispatchQueue(label: "dev.touchbarbuddies.icons", qos: .utility)
+
   private static func save(_ img: CGImage, to file: URL) {
-    try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-    guard let dest = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else { return }
-    CGImageDestinationAddImage(dest, img, nil)
-    CGImageDestinationFinalize(dest)
+    saver.async {
+      try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+      guard let dest = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else { return }
+      CGImageDestinationAddImage(dest, img, nil)
+      CGImageDestinationFinalize(dest)
+    }
   }
 
   private static func render(_ icon: Icon, symbols: Bool = true) -> CGImage {
