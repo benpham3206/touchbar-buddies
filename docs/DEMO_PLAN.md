@@ -9,6 +9,15 @@ tools/demo/render.sh --stills 3,12.5     # PNGs of those moments (seconds of the
 tools/demo/render.sh --fresh             # a new take of the Touch Bar frames (see "Randomness")
 ```
 
+## What's left (user feedback on the first cut)
+
+1. **Sound effects, no voiceover**: taps, pops, typing clicks, whooshes for the trips across the bar, a chime for
+   the high-five and the confetti. The events are already known (`do` cues, `timeline.json` mode changes, things
+   in flight); mix them into an AAC track with AVAssetWriter.
+2. **Fix the laptop's perspective**: the keyboard looks off at that angle. Rework the deck/keyboard mockup
+   (`drawDeck`, `deckPoint`) so the keys, trackpad and Touch Bar sit on one consistent plane.
+3. The "Maybe later" README visuals at the end of this file.
+
 ## Why it's rendered, not recorded
 
 - A screen recording would need Screen Recording permission, and it would show private Claude/ChatGPT
