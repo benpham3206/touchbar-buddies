@@ -34,12 +34,13 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | `Sources/SliderPopover.swift` | The brightness/volume slider, drawn like the native one |
 | `Sources/Icons.swift` | Button glyphs: SF Symbols plus a few shapes traced from the real bar |
 | `Sources/TouchBarPrivate.swift` | The private DFRFoundation / NSTouchBar calls that let an app replace the Control Strip |
-| `Sources/Render.swift` | `--render`: draws the Touch Bar offscreen to a GIF or a PNG filmstrip |
+| `Sources/Render.swift` | `--render`: draws the Touch Bar offscreen to a GIF, a PNG filmstrip, or a folder of frames + `timeline.json` |
 | `tbb` | Helper for trying changes: `run`, `send`, `render`, `shot`, `logs`, `sprites`, `commands` |
 | `build.sh` | `swiftc` to a universal, ad-hoc-signed `build/TouchBarBuddies.app` (`--native`: this Mac's CPU only, faster) |
 | `install.sh` / `uninstall.sh` | Build, copy to `~/Applications`, and register the login LaunchAgent / undo all of that. Both take `--dry-run` |
 | `package.sh` | Zips the app for a GitHub Release |
 | `docs/make-gifs.sh` | Re-renders the README GIFs (`docs/touchbar.gif`, `docs/closeup.gif`) |
+| `tools/demo/` | The README demo video: `storyboard.txt` (the cues), `compose.swift` (laptop, lenses, captions around the rendered frames), `render.sh` (does it all: `docs/demo.mp4` + `docs/demo.gif`). See `docs/DEMO_PLAN.md` |
 
 ## How it fits together
 
@@ -195,7 +196,7 @@ Add rows to `Sprite` in `PixelArt.swift` (`#` = filled) and a color to `Palette`
    and `./tbb shot out.png` saves what the Touch Bar really shows (2008 × 60; the terminal needs Screen
    Recording permission). If an installed copy is running, `./tbb run` replaces it until the next login.
    `./install.sh` makes the change permanent.
-4. If you changed something the README GIFs show, run `docs/make-gifs.sh`.
+4. If you changed something the README GIFs show, run `docs/make-gifs.sh` (and `tools/demo/render.sh` for the demo video).
 
 ## Logs
 

@@ -1,16 +1,15 @@
-// Builds the README demo (docs/demo.mp4 + docs/demo.gif) around the Touch Bar frames that
-// `TouchBarBuddies --render-demo` rendered with the app's real drawing code.
+// Builds the README demo (docs/demo.mp4 + docs/demo.gif) around Touch Bar frames drawn by the app's real
+// Scene + StripView code (`TouchBarBuddies --render <folder>`: NNNN.png at 8 px/pt plus timeline.json).
 //
-// It draws a stylized MacBook: a desktop mockup on the screen (the ChatGPT · Codex and Claude windows
-// are simple generic mockups, not screenshots), the whole Touch Bar strip on the keyboard deck, and two
-// magnifier lenses with speech bubbles so the 30pt-tall buddies are easy to see.
+// It draws a stylized MacBook: a desktop mockup on the screen (the ChatGPT · Codex and Claude windows are simple
+// generic mockups, not screenshots, with no real user data), the whole Touch Bar strip on the keyboard deck, and
+// two magnifier lenses, one per buddy, that follow their buddy across the bar and merge into one wide lens when
+// the two meet. Speech bubbles, taps, captions and the title / end cards come from tools/demo/storyboard.txt.
 //
-//   swiftc -O -swift-version 5 tools/demo/compose.swift -o build/demo/compose
-//   build/demo/compose <framesDir> <out.mp4> <out.gif>
-//   build/demo/compose <framesDir> --stills <outDir> 1.5,7.8,24   (check single frames as PNGs)
-//
-// WORK IN PROGRESS: this still reads the frame dump of the old `--render-demo` mode (strip@2x/, strip@8x/,
-// timeline.json with events). See docs/DEMO_PLAN.md for how to feed it from Sources/Render.swift.
+//   tools/demo/render.sh does it all. By hand:
+//   swiftc -O -swift-version 5 -target $(uname -m)-apple-macos13 tools/demo/compose.swift -o build/demo/compose
+//   build/demo/compose <framesDir> <storyboard.txt> <out.mp4> [out.gif]
+//   build/demo/compose <framesDir> <storyboard.txt> --stills <outDir> 1.5,7.8,24   (seconds of the video)
 
 import AppKit
 import AVFoundation
@@ -18,45 +17,149 @@ import CoreText
 import ImageIO
 import UniformTypeIdentifiers
 
-// MARK: - Timeline (written by Sources/Demo.swift)
+// MARK: - Inputs
 
-struct BuddyInfo: Decodable { let x, hop: Double; let mode: String; let busy: Bool }
-struct FrameInfo: Decodable { let t: Double; let codex, clawd: BuddyInfo; let speaking: [String] }
-struct Event: Decodable {
-  let t: Double
-  let kind: String
-  let who: String?
-  let text: String?
-  let dur: Double?
-  let on: Bool?
-  let x: Double?
-}
+struct BuddyInfo: Decodable { let x, hop: Double; let mode: String; let busy, ultra: Bool }
+struct FrameInfo: Decodable { let t: Double; let codex, clawd: BuddyInfo; let flying: [[Double]] }
 struct Timeline: Decodable {
-  let fps: Int
-  let length: Double
-  let width, height: Double
+  let fps, scale: Int
   let codexPocket, clawdPocket: [Double]
-  let events: [Event]
   let frames: [FrameInfo]
 }
 
+/// A storyboard line (in the renderer's seconds), or an event derived from the frames (in seconds of the video).
+struct Cue {
+  var t: Double
+  var kind: String
+  var who: String? = nil
+  var text: String? = nil
+  var dur: Double? = nil
+  var x: Double? = nil
+}
+struct Ramp { let from, to, speed: Double }
+
+func fail(_ s: String) -> Never {
+  FileHandle.standardError.write(Data("compose: \(s)\n".utf8))
+  exit(1)
+}
+
 let args = CommandLine.arguments
-guard args.count >= 3 else {
-  print("usage: compose <framesDir> <out.mp4> <out.gif> | compose <framesDir> --stills <outDir> <t1,t2,…>")
+guard args.count >= 4 else {
+  print("usage: compose <framesDir> <storyboard.txt> <out.mp4> [out.gif] | compose <framesDir> <storyboard.txt> --stills <outDir> <t1,t2,…>")
   exit(1)
 }
 let framesDir = URL(fileURLWithPath: args[1])
-let tl = try! JSONDecoder().decode(Timeline.self, from: Data(contentsOf: framesDir.appendingPathComponent("timeline.json")))
-let fps = Double(tl.fps)
+guard let tlData = try? Data(contentsOf: framesDir.appendingPathComponent("timeline.json")),
+      let tl = try? JSONDecoder().decode(Timeline.self, from: tlData) else { fail("no timeline.json in \(framesDir.path)") }
+guard tl.scale == 8 else { fail("the frames must be 8 px/pt (--scale 8)") }
+let srcFps = Double(tl.fps)
+let fps = 30.0                  // the video's frame rate
 
-func event(_ kind: String, _ who: String? = nil) -> Event? { tl.events.first { $0.kind == kind && (who == nil || $0.who == who) } }
-func events(_ kind: String) -> [Event] { tl.events.filter { $0.kind == kind } }
-func workTime(_ who: String, _ on: Bool) -> Double? { tl.events.first { $0.kind == "work" && $0.who == who && $0.on == on }?.t }
+// MARK: - Storyboard
 
-func stripFrame(_ i: Int, scale: Int) -> CGImage {
-  let url = framesDir.appendingPathComponent(String(format: "strip@%dx/%04d.png", scale, i))
-  let src = CGImageSourceCreateWithURL(url as CFURL, nil)!
-  return CGImageSourceCreateImageAtIndex(src, 0, nil)!
+var cues: [Cue] = [], ramps: [Ramp] = [], gifRange = 0.0...0.0
+guard let board = try? String(contentsOfFile: args[2], encoding: .utf8) else { fail("can't read \(args[2])") }
+for raw in board.components(separatedBy: .newlines) {
+  let line = raw.trimmingCharacters(in: .whitespaces)
+  if line.isEmpty || line.hasPrefix("#") { continue }
+  let words = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true).map(String.init)
+  let numbers = line.split(separator: " ").compactMap { Double($0) }
+  if words[0] == "ramp" && numbers.count == 3 { ramps.append(Ramp(from: numbers[0], to: numbers[1], speed: numbers[2])); continue }
+  if words[0] == "gif" && numbers.count == 2 { gifRange = numbers[0]...numbers[1]; continue }
+  guard let t = Double(words[0]), words.count >= 2 else { fail("can't read the storyboard line \"\(line)\"") }
+  var cue = Cue(t: t, kind: words[1])
+  var rest = words.count > 2 ? words[2] : ""
+  if let bar = rest.range(of: "|", options: .backwards) {
+    cue.dur = Double(rest[bar.upperBound...].trimmingCharacters(in: .whitespaces))
+    rest = rest[..<bar.lowerBound].trimmingCharacters(in: .whitespaces)
+  }
+  if cue.kind == "say" || cue.kind == "prompt" {
+    let parts = rest.split(separator: " ", maxSplits: 1).map(String.init)
+    cue.who = parts.first
+    rest = parts.count > 1 ? parts[1] : ""
+  }
+  cue.text = rest.isEmpty ? nil : rest
+  cues.append(cue)
+}
+
+// MARK: - Time: the video's frames → the renderer's seconds (faster through the ramps)
+
+func smoothstep(_ x: Double) -> Double { let u = min(1, max(0, x)); return u * u * (3 - 2 * u) }
+
+/// How fast the video plays at renderer time `s`: 1, or a ramp's speed (eased in and out over 0.4 s).
+func speed(_ s: Double) -> Double {
+  var v = 1.0
+  for r in ramps {
+    let w = smoothstep((s - r.from) / 0.4) * smoothstep((r.to - s) / 0.4)
+    v = max(v, 1 + (r.speed - 1) * w)
+  }
+  return v
+}
+
+let lastSrc = Double(tl.frames.count - 1) / srcFps
+let stopSrc = min(cues.first { $0.kind == "stop" }?.t ?? lastSrc, lastSrc)
+let srcTimes: [Double] = {
+  var out: [Double] = [], s = 0.0
+  while s < stopSrc { out.append(s); s += speed(s) / fps }
+  return out
+}()
+let frameCount = srcTimes.count
+let videoLength = Double(frameCount) / fps
+
+func srcIndex(_ src: Double) -> Int { min(tl.frames.count - 1, max(0, Int((src * srcFps).rounded()))) }
+/// The source frame shown on video frame `i`.
+func info(_ i: Int) -> FrameInfo { tl.frames[srcIndex(srcTimes[min(i, frameCount - 1)])] }
+func sourceFrame(_ i: Int) -> Int { srcIndex(srcTimes[min(i, frameCount - 1)]) }
+
+/// Seconds of video at renderer time `src`.
+func videoTime(_ src: Double) -> Double {
+  var lo = 0, hi = srcTimes.count
+  while lo < hi { let mid = (lo + hi) / 2; if srcTimes[mid] < src - 1e-9 { lo = mid + 1 } else { hi = mid } }
+  return Double(lo) / fps
+}
+
+/// Ramp speed on video frame `i`.
+func speedAt(_ i: Int) -> Double { speed(srcTimes[min(i, frameCount - 1)]) }
+
+// MARK: - Events (seconds of video)
+
+let tlEvents: [Cue] = {
+  var out: [Cue] = []
+  for c in cues {
+    var e = c
+    e.t = videoTime(c.t)
+    if c.kind == "do" {
+      // A tap on a buddy: a ripple where it stands.
+      guard let cmd = c.text, cmd == "tap-codex" || cmd == "tap-clawd" else { continue }
+      let who = cmd == "tap-codex" ? "codex" : "clawd"
+      let f = tl.frames[srcIndex(c.t)]
+      out.append(Cue(t: e.t, kind: "tap", who: who, x: (who == "codex" ? f.codex : f.clawd).x))
+    } else {
+      out.append(e)
+    }
+  }
+  // From the frames: when each app opens (the buddy wakes up), when its agent starts and finishes work.
+  for who in ["codex", "clawd"] {
+    var prev: BuddyInfo?
+    for (i, f) in tl.frames.enumerated() {
+      let b = who == "codex" ? f.codex : f.clawd
+      if let p = prev {
+        let t = videoTime(Double(i) / srcFps)
+        if p.mode == "sleep" && b.mode != "sleep" { out.append(Cue(t: t, kind: "open", who: who)) }
+        if (p.mode == "work") != (b.mode == "work") { out.append(Cue(t: t, kind: b.mode == "work" ? "work" : "done", who: who)) }
+      }
+      prev = b
+    }
+  }
+  return out.sorted { $0.t < $1.t }
+}()
+
+func event(_ kind: String, _ who: String? = nil) -> Cue? { tlEvents.first { $0.kind == kind && (who == nil || $0.who == who) } }
+func events(_ kind: String) -> [Cue] { tlEvents.filter { $0.kind == kind } }
+func workStart(_ who: String) -> Double? { event("work", who)?.t }
+func workEnd(_ who: String) -> Double? {
+  guard let on = workStart(who) else { return nil }
+  return tlEvents.first { $0.kind == "done" && $0.who == who && $0.t > on }?.t
 }
 
 // MARK: - Layout (1920×1080, y grows downward)
@@ -69,8 +172,9 @@ let deckBottom: CGFloat = 1130, deckBotL: CGFloat = 96, deckBotR: CGFloat = 1824
 let barPt: CGFloat = 1.1                                   // deck strip: pixels per point
 let bar = CGRect(x: W / 2 - 1004 * barPt / 2, y: 626, width: 1004 * barPt, height: 30 * barPt)
 let zoom: CGFloat = 8                                      // lens: pixels per point (the 8× frames, 1:1)
-let lensW: CGFloat = 640, lensH: CGFloat = 240
+let lensW: CGFloat = 640, lensH: CGFloat = 240, lensY: CGFloat = 806, lensMargin: CGFloat = 56
 let menuH: CGFloat = 24
+let captionY: CGFloat = 704                                // the caption band, between the strip and the lenses
 
 // MARK: - Colors & fonts
 
@@ -84,6 +188,7 @@ let codexBlue = rgb(96, 128, 255), codexLight = rgb(150, 190, 255)
 let clawdOrange = rgb(217, 119, 87)
 let green = rgb(98, 210, 130), red = rgb(255, 110, 110), pink = rgb(255, 122, 178), amber = rgb(255, 196, 110)
 let ink = rgb(29, 29, 31)
+let violet = rgb(167, 139, 250)          // the app's ultra color (Palette.violet)
 let confettiColors = [clawdOrange, codexBlue, rgb(255, 214, 90), green, rgb(255, 105, 140), white(1)]
 
 func sans(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont { .systemFont(ofSize: size, weight: weight) }
@@ -234,51 +339,98 @@ func prefix(_ spans: [Span], _ n: Int) -> [Span] {
 
 func charCount(_ spans: [Span]) -> Int { spans.reduce(0) { $0 + $1.text.count } }
 
+
 // MARK: - Lenses
 
-/// A magnifier over part of the strip. It frames its buddy, and slides over to include a visitor.
+/// One magnifier on one frame: where it is on screen and which part of the strip it shows (1 pt = `zoom` px).
 struct Lens {
-  let rect: CGRect             // where the magnified strip appears (inside the frame)
-  let home: CGFloat            // strip x (points) it rests on: its buddy's pocket
-  let label: String
-  let color: CGColor
-  var isLeft: Bool { rect.midX < W / 2 }
-  var centers: [CGFloat] = []  // strip x at the lens center, per frame (smoothed like a camera)
+  let rect: CGRect
+  let center: CGFloat          // strip x (points) at the lens's center
+  let merge: CGFloat           // 0 = two separate lenses … 1 = one wide lens made of both halves
+  let isLeft: Bool
+  var label: String { isLeft ? "Codex" : "Clawd" }
+  var color: CGColor { isLeft ? codexBlue : clawdOrange }
+  var halfView: CGFloat { rect.width / 2 / zoom }
 
-  func screenX(_ stripX: CGFloat, _ i: Int) -> CGFloat { rect.midX + (stripX - centers[i]) * zoom }
-  func shows(_ stripX: CGFloat, _ i: Int) -> Bool { abs(stripX - centers[i]) < lensW / zoom / 2 - 6 }
+  func screenX(_ stripX: CGFloat) -> CGFloat { rect.midX + (stripX - center) * zoom }
+  func shows(_ stripX: CGFloat, margin: CGFloat = 6) -> Bool { abs(stripX - center) < halfView - margin }
 }
 
 func pocketMid(_ p: [Double]) -> CGFloat { CGFloat(p[0] + p[2] / 2) }
+let codexHome = pocketMid(tl.codexPocket), clawdHome = pocketMid(tl.clawdPocket)
 
-func trackCenters(home: CGFloat) -> [CGFloat] {
-  var c = home, out: [CGFloat] = []
-  for f in tl.frames {
-    // Everyone within ~100pt of home pulls the framing toward them (fading in as they get close).
-    var sum = home * 0.001, weight: CGFloat = 0.001
-    for x in [CGFloat(f.codex.x), CGFloat(f.clawd.x)] {
-      let w = clamp01((110 - abs(x - home)) / 60)
-      sum += x * w
-      weight += w
+/// A centered moving average, twice (≈ Gaussian): the camera eases in and out with no lag.
+func smoothed(_ a: [CGFloat], radius: Int) -> [CGFloat] {
+  var v = a
+  for _ in 0..<2 {
+    var prefix = [CGFloat](repeating: 0, count: v.count + 1)
+    for (i, x) in v.enumerated() { prefix[i + 1] = prefix[i] + x }
+    v = v.indices.map { i in
+      let lo = max(0, i - radius), hi = min(v.count - 1, i + radius)
+      return (prefix[hi + 1] - prefix[lo]) / CGFloat(hi - lo + 1)
     }
-    c += (sum / weight - c) * (1 - exp(-1 / (fps * 0.25)))
-    out.append(c)
   }
-  return out
+  return v
 }
 
-var lensL = Lens(rect: CGRect(x: 56, y: 806, width: lensW, height: lensH), home: pocketMid(tl.codexPocket), label: "Codex", color: codexBlue)
-var lensR = Lens(rect: CGRect(x: W - 56 - lensW, y: 806, width: lensW, height: lensH), home: pocketMid(tl.clawdPocket), label: "Clawd", color: clawdOrange)
-lensL.centers = trackCenters(home: lensL.home)
-lensR.centers = trackCenters(home: lensR.home)
+/// Each lens follows its own buddy once it leaves home (a step or two inside its pocket doesn't count). As the two buddies get close, both lenses switch to one shared camera (so nothing shows
+/// twice; the gap between the lenses hides a strip of the bar like a window frame would), then slide together
+/// into one wide view of both. Computed for the whole video up front, so the camera never lags behind.
+let lensTrack: (left: [CGFloat], right: [CGFloat], mid: [CGFloat], shared: [CGFloat], merge: [CGFloat]) = {
+  func follow(_ x: CGFloat, _ home: CGFloat, behind: CGFloat = 0) -> CGFloat {
+    home + (x + behind - home) * CGFloat(smoothstep(Double(abs(x - home) - 15) / 40))
+  }
+  var l: [CGFloat] = [], r: [CGFloat] = [], mid: [CGFloat] = [], c: [CGFloat] = [], m: [CGFloat] = []
+  for i in 0..<frameCount {
+    let f = info(i), xc = CGFloat(f.codex.x), xl = CGFloat(f.clawd.x)
+    l.append(follow(xc, codexHome))
+    r.append(follow(xl, clawdHome, behind: 12))   // (his kart sits a little right of where he stands)
+    mid.append((xc + xl) / 2)
+    let d = Double(abs(xl - xc))
+    c.append(CGFloat(smoothstep((260 - d) / 80)))
+    m.append(CGFloat(smoothstep((150 - d) / 60)))
+  }
+  // (Positions only need a light touch: they're smooth already, and heavy smoothing lags where a ramp speeds up.)
+  return (smoothed(l, radius: 2), smoothed(r, radius: 2), smoothed(mid, radius: 2), smoothed(c, radius: 5), smoothed(m, radius: 5))
+}()
 
-func lensFor(_ who: String, _ i: Int) -> Lens {
-  let f = tl.frames[i]
-  if who == "codex" { return lensL }
-  return lensR.shows(CGFloat(f.clawd.x), i) || !lensL.shows(CGFloat(f.clawd.x), i) ? lensR : lensL
+func lenses(_ i: Int) -> [Lens] {
+  let m = lensTrack.merge[i], mid = lensTrack.mid[i], c = lensTrack.shared[i]
+  let wL = lerp(lensW, W / 2 - lensMargin, m)
+  let left = CGRect(x: lensMargin, y: lensY, width: wL, height: lensH)
+  let xR = lerp(W - lensMargin - lensW, W / 2, m)
+  let right = CGRect(x: xR, y: lensY, width: W - lensMargin - xR, height: lensH)
+  // The shared camera: the middle of the screen looks at the point between the two buddies.
+  return [Lens(rect: left, center: lerp(lensTrack.left[i], mid + (left.midX - W / 2) / zoom, c), merge: m, isLeft: true),
+          Lens(rect: right, center: lerp(lensTrack.right[i], mid + (right.midX - W / 2) / zoom, c), merge: m, isLeft: false)]
+}
+
+/// The lens showing a buddy: its own if it can, else the other one.
+func lensShowing(_ who: String, _ x: CGFloat, _ i: Int) -> Lens {
+  let ls = lenses(i)
+  let own = who == "codex" ? ls[0] : ls[1], other = who == "codex" ? ls[1] : ls[0]
+  return own.shows(x) || !other.shows(x) ? own : other
 }
 
 func stripToBar(_ x: CGFloat) -> CGFloat { bar.minX + x * barPt }
+
+/// A rectangle with its left and right corners rounded separately (the seam side of a merging lens squares off).
+func corners(_ r: CGRect, left: CGFloat, right: CGFloat) -> CGPath {
+  let a = max(0.01, left), b = max(0.01, right)
+  let p = CGMutablePath()
+  p.move(to: CGPoint(x: r.minX + a, y: r.minY))
+  p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.minY), tangent2End: CGPoint(x: r.maxX, y: r.maxY), radius: b)
+  p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.maxY), tangent2End: CGPoint(x: r.minX, y: r.maxY), radius: b)
+  p.addArc(tangent1End: CGPoint(x: r.minX, y: r.maxY), tangent2End: CGPoint(x: r.minX, y: r.minY), radius: a)
+  p.addArc(tangent1End: CGPoint(x: r.minX, y: r.minY), tangent2End: CGPoint(x: r.maxX, y: r.minY), radius: a)
+  p.closeSubpath()
+  return p
+}
+
+func lensShape(_ l: Lens, _ r: CGRect, _ radius: CGFloat) -> CGPath {
+  let seam = radius * (1 - l.merge)
+  return l.isLeft ? corners(r, left: radius, right: seam) : corners(r, left: seam, right: radius)
+}
 
 // MARK: - Dock icons (pre-rendered once)
 
@@ -343,32 +495,33 @@ let titleBarH: CGFloat = 32
 let codeFont = mono(12.5), codeBold = mono(12.5, .semibold)
 let dim = white(0.45), text = white(0.9)
 
+
 let codexStream: [[Span]] = [
   [Span("• ", dim, codeFont), Span("Explored ", text, codeBold), Span("Sources/StripView.swift", codexLight, codeFont)],
-  [Span("• ", dim, codeFont), Span("Edited ", text, codeBold), Span("Sources/Scene.swift ", codexLight, codeFont),
-   Span("+24 ", green, codeFont), Span("−2", red, codeFont)],
-  [Span("    func ", pink, codeFont), Span("toss", codexLight, codeFont), Span("(_ a: Buddy, _ b: Buddy) {", text, codeFont)],
-  [Span("      a.enqueue(", text, codeFont), Span("throwSteps", codexLight, codeFont), Span("(a, toward: b))", text, codeFont)],
-  [Span("      after(", text, codeFont), Span("0.28", amber, codeFont), Span(") { ", text, codeFont),
-   Span("throwThing", codexLight, codeFont), Span("(.ball) }", text, codeFont)],
+  [Span("• ", dim, codeFont), Span("Edited ", text, codeBold), Span("Sources/StripView.swift ", codexLight, codeFont),
+   Span("+31 ", green, codeFont), Span("−4", red, codeFont)],
+  [Span("    func ", pink, codeFont), Span("relayout", codexLight, codeFont), Span("() {", text, codeFont)],
+  [Span("      let ", pink, codeFont), Span("items = ", text, codeFont), Span("controlStripItems", codexLight, codeFont), Span("()", text, codeFont)],
+  [Span("      pockets = ", text, codeFont), Span("gaps", codexLight, codeFont), Span("(in: items, width: ", text, codeFont),
+   Span("1004", amber, codeFont), Span(")", text, codeFont)],
   [Span("    }", text, codeFont)],
-  [Span("• ", dim, codeFont), Span("Ran ", text, codeBold), Span("swift build && swift test", codexLight, codeFont)],
+  [Span("• ", dim, codeFont), Span("Ran ", text, codeBold), Span("./build.sh", codexLight, codeFont)],
 ]
 let codexDone: [[Span]] = [
-  [Span("  ✓ 12 tests passed", green, codeBold)],
-  [Span("• ", dim, codeFont), Span("Done. Ready to ship.", text, codeFont)],
+  [Span("  ✓ built, 0 warnings", green, codeBold)],
+  [Span("• ", dim, codeFont), Span("Done. The strip is ready.", text, codeFont)],
 ]
 let claudeStream: [[Span]] = [
   [Span("⏺ ", clawdOrange, codeFont), Span("Update", text, codeBold), Span("(Sources/Scene.swift)", text, codeFont)],
-  [Span("  ⎿ ", dim, codeFont), Span("+ case \"packets\": go { packets() }", green, codeFont)],
-  [Span("    ", dim, codeFont), Span("+ throwThing(.glyph(\"✻\"), to: codex)", green, codeFont)],
-  [Span("⏺ ", clawdOrange, codeFont), Span("Update", text, codeBold), Span("(Sources/StripView.swift)", text, codeFont)],
-  [Span("  ⎿ ", dim, codeFont), Span("+ scene.draw(ctx)", green, codeFont)],
+  [Span("  ⎿ ", dim, codeFont), Span("+ case \"toss\": go { toss(a, b) }", green, codeFont)],
+  [Span("    ", dim, codeFont), Span("+ throwThing(.ball, from: a, to: b)", green, codeFont)],
+  [Span("⏺ ", clawdOrange, codeFont), Span("Update", text, codeBold), Span("(Sources/Bank.swift)", text, codeFont)],
+  [Span("  ⎿ ", dim, codeFont), Span("+ cHappy = strip(\"waving\").slice(4...9)", green, codeFont)],
   [Span("⏺ ", clawdOrange, codeFont), Span("Bash", text, codeBold), Span("(./build.sh)", text, codeFont)],
   [Span("  ⎿ ", dim, codeFont), Span("built build/TouchBarBuddies.app", dim, codeFont)],
 ]
 let claudeDone: [[Span]] = [
-  [Span("⏺ ", green, codeFont), Span("All set. Ship it! 🚀", text, codeBold)],
+  [Span("⏺ ", green, codeFont), Span("All set: the buddies are animated.", text, codeBold)],
 ]
 
 /// Lines revealed `since` seconds ago at `cps` characters/second, with a short pause after each line.
@@ -384,15 +537,22 @@ func revealed(_ lines: [[Span]], since: Double, cps: Double) -> [[Span]] {
   return out
 }
 
-/// Typed text for a window's prompt box (types over ~1.3s, then waits for "enter").
+/// Typed text for a window's prompt box (types over ~1.2 s, then waits for its buddy to start work).
 func typedPrompt(_ who: String, _ t: Double) -> String? {
   guard let e = event("prompt", who), t >= e.t, let s = e.text else { return nil }
-  if let on = workTime(who, true), t >= on { return nil }
-  let n = Int((t - e.t) / 1.3 * Double(s.count))
+  if let on = workStart(who), t >= on { return nil }
+  let n = Int((t - e.t) / 1.2 * Double(s.count))
   return String(s.prefix(max(0, n)))
 }
 
 func caretOn(_ t: Double) -> Bool { Int(t * 2.2) % 2 == 0 }
+
+/// The current video frame (the windows ask whether their buddy is in ultra mode).
+var cur = 0
+func ultra(_ who: String) -> Bool {
+  let f = info(cur), b = who == "codex" ? f.codex : f.clawd
+  return b.ultra && b.mode == "work"
+}
 
 func drawChrome(_ ctx: CGContext, _ r: CGRect, title: String, body: CGColor, bar barColor: CGColor) {
   ctx.saveGState()
@@ -415,30 +575,23 @@ func drawChrome(_ ctx: CGContext, _ r: CGRect, title: String, body: CGColor, bar
 }
 
 /// Lines of a transcript, newest at the bottom, clipped to `area`.
-func drawTranscript(_ ctx: CGContext, _ lines: [[Span]], in area: CGRect, lineH: CGFloat = 19, caret: Bool = false) {
+func drawTranscript(_ ctx: CGContext, _ lines: [[Span]], in area: CGRect, lineH: CGFloat = 19) {
   let fit = Int(area.height / lineH)
-  let shown = Array(lines.suffix(fit))
-  for (k, l) in shown.enumerated() {
-    let line = makeLine(l)
-    let base = area.minY + lineH * CGFloat(k) + 14
-    draw(ctx, line, x: area.minX, baseline: base)
-    if caret && k == shown.count - 1 {
-      ctx.setFillColor(white(0.8))
-      ctx.fill(CGRect(x: area.minX + width(line) + 2, y: base - 11, width: 7, height: 14))
-    }
+  for (k, l) in lines.suffix(fit).enumerated() {
+    draw(ctx, makeLine(l), x: area.minX, baseline: area.minY + lineH * CGFloat(k) + 14)
   }
 }
 
 func drawCodexWindow(_ ctx: CGContext, _ t: Double) {
   let r = codexWindow
   drawChrome(ctx, r, title: "ChatGPT · Codex", body: rgb(24, 24, 27), bar: rgb(32, 32, 36))
-  let on = workTime("codex", true), off = workTime("codex", false)
+  let on = workStart("codex"), off = workEnd("codex")
   let started = on.map { t >= $0 } ?? false
 
   // Start screen: a >_ badge and a big question, fading away once the work starts.
   let heroAlpha = started ? 1 - clamp01(CGFloat(t - on!) / 0.3) : 1
   faded(ctx, heroAlpha) {
-    let badge = CGRect(x: r.midX - 32, y: r.minY + titleBarH + 70, width: 64, height: 64)
+    let badge = CGRect(x: r.midX - 32, y: r.minY + titleBarH + 64, width: 64, height: 64)
     fill(ctx, rounded(badge, 16), white(0.06))
     stroke(ctx, rounded(badge.insetBy(dx: 0.5, dy: 0.5), 16), white(0.14), 1)
     drawCentered(ctx, [Span(">_", white(0.92), mono(26, .bold))], cx: badge.midX, baseline: badge.midY + 9)
@@ -447,7 +600,7 @@ func drawCodexWindow(_ ctx: CGContext, _ t: Double) {
   }
 
   // Prompt box.
-  let box = CGRect(x: r.minX + 16, y: r.maxY - 16 - 58, width: r.width - 32, height: 58)
+  let box = CGRect(x: r.minX + 16, y: r.maxY - 16 - 52, width: r.width - 32, height: 52)
   fill(ctx, rounded(box, 16), white(0.05))
   stroke(ctx, rounded(box.insetBy(dx: 0.5, dy: 0.5), 16), white(0.15), 1)
   let typed = typedPrompt("codex", t)
@@ -472,53 +625,66 @@ func drawCodexWindow(_ ctx: CGContext, _ t: Double) {
     fill(ctx, rounded(bubble, 14), white(0.09))
     draw(ctx, askLine, x: bubble.minX + 14, baseline: bubble.midY + 5)
   }
-  var lines = revealed(codexStream, since: t - on - 0.35, cps: 62)
-  var working = true
-  if let off, t >= off { lines = codexStream + revealed(codexDone, since: t - off, cps: 50); working = false }
-  if working && t - on > 0.35 {
+  var lines = revealed(codexStream, since: t - on - 0.35, cps: 55)
+  if let off, t >= off {
+    lines = codexStream + [[]] + revealed(codexDone, since: t - off, cps: 50)
+  } else if t - on > 0.35 {
     let dots = String(repeating: ".", count: Int(t * 3) % 4)
-    lines.append([Span("◦ Working" + dots, white(0.5), codeFont)])
+    lines.append([])
+    lines.append(ultra("codex")
+      ? [Span("◦ Working", violet, codeBold), Span(" · ultra" + dots, violet, codeFont)]
+      : [Span("◦ Working" + dots, white(0.5), codeFont)])
   }
-  drawTranscript(ctx, lines, in: CGRect(x: r.minX + 20, y: bubble.maxY + 14, width: r.width - 40, height: box.minY - bubble.maxY - 24))
+  drawTranscript(ctx, lines, in: CGRect(x: r.minX + 20, y: bubble.maxY + 14, width: r.width - 40, height: box.minY - bubble.maxY - 20))
 }
 
 func drawClaudeWindow(_ ctx: CGContext, _ t: Double) {
   let r = claudeWindow
   drawChrome(ctx, r, title: "Claude", body: rgb(27, 26, 24), bar: rgb(36, 35, 32))
-  let on = workTime("clawd", true), off = workTime("clawd", false)
+  let on = workStart("clawd"), off = workEnd("clawd")
   let started = on.map { t >= $0 } ?? false
 
   // Claude Code's welcome box.
-  let welcome = CGRect(x: r.minX + 16, y: r.minY + titleBarH + 14, width: r.width - 32, height: 98)
+  let welcome = CGRect(x: r.minX + 16, y: r.minY + titleBarH + 14, width: r.width - 32, height: 92)
   stroke(ctx, rounded(welcome, 8), clawdOrange, 1.5)
   draw(ctx, makeLine([Span("✻ ", clawdOrange, mono(14, .bold)), Span("Welcome to Claude Code", white(0.95), mono(14, .bold))]),
        x: welcome.minX + 16, baseline: welcome.minY + 28)
-  draw(ctx, makeLine([Span("/help for help, /status for your setup", white(0.45), mono(12.5))]), x: welcome.minX + 16, baseline: welcome.minY + 58)
-  draw(ctx, makeLine([Span("cwd: ~/touchbar-buddies", white(0.45), mono(12.5))]), x: welcome.minX + 16, baseline: welcome.minY + 80)
+  draw(ctx, makeLine([Span("/help for help, /status for your setup", white(0.45), mono(12.5))]), x: welcome.minX + 16, baseline: welcome.minY + 55)
+  draw(ctx, makeLine([Span("cwd: ~/touchbar-buddies", white(0.45), mono(12.5))]), x: welcome.minX + 16, baseline: welcome.minY + 76)
 
-  // Prompt box.
+  // Prompt box. The block caret sits after the "> ", with the placeholder just past it.
   let box = CGRect(x: r.minX + 16, y: r.maxY - 16 - 46, width: r.width - 32, height: 46)
   stroke(ctx, rounded(box, 8), white(0.3), 1)
   let typed = typedPrompt("clawd", t)
-  var spans = [Span("> ", white(0.8), mono(14, .bold))]
-  if let typed { spans.append(Span(typed, white(0.95), mono(14))) } else { spans.append(Span("Try \"pair with Codex\"", white(0.35), mono(14))) }
-  let line = makeLine(spans)
-  draw(ctx, line, x: box.minX + 14, baseline: box.midY + 5)
-  if typed != nil || !started, caretOn(t) {
+  let mark = makeLine([Span("> ", white(0.8), mono(14, .bold))])
+  draw(ctx, mark, x: box.minX + 14, baseline: box.midY + 5)
+  let textX = box.minX + 14 + width(mark)
+  var caretX = textX
+  if let typed {
+    let l = makeLine([Span(typed, white(0.95), mono(14))])
+    draw(ctx, l, x: textX, baseline: box.midY + 5)
+    caretX = textX + width(l) + 1
+  } else if !started {
+    draw(ctx, makeLine([Span("Try \"refactor the scene\"", white(0.35), mono(14))]), x: textX + 12, baseline: box.midY + 5)
+  }
+  if (typed != nil || !started) && caretOn(t) {
     ctx.setFillColor(white(0.85))
-    ctx.fill(CGRect(x: box.minX + 14 + (typed == nil ? 16 : width(line) + 1), y: box.midY - 9, width: 8, height: 17))
+    ctx.fill(CGRect(x: caretX, y: box.midY - 9, width: 8, height: 17))
   }
 
   guard started, let on else { return }
   let ask = event("prompt", "clawd")?.text ?? ""
-  var lines: [[Span]] = [[Span("> " + ask, white(0.5), codeFont)], []]
-  lines += revealed(claudeStream, since: t - on - 0.3, cps: 58)
+  let asked: [[Span]] = [[Span("> " + ask, white(0.5), codeFont)], []]
+  var lines = asked + revealed(claudeStream, since: t - on - 0.3, cps: 55)
   if let off, t >= off {
-    lines = [[Span("> " + ask, white(0.5), codeFont)], []] + claudeStream + [[]] + revealed(claudeDone, since: t - off - 0.2, cps: 40)
+    lines = asked + claudeStream + [[]] + revealed(claudeDone, since: t - off - 0.2, cps: 40)
   } else {
-    let spinner = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"][Int(t / 0.12) % 10]
+    let hot = ultra("clawd")
+    let spinner = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"][Int(t / (hot ? 0.06 : 0.12)) % 10]
+    let color = hot ? violet : clawdOrange
     lines.append([])
-    lines.append([Span(spinner + " ", clawdOrange, codeBold), Span("Pairing… ", clawdOrange, codeFont), Span("(esc to interrupt)", white(0.4), codeFont)])
+    lines.append([Span(spinner + " ", color, codeBold), Span(hot ? "Ultracoding… " : "Animating… ", color, codeFont),
+                  Span("(esc to interrupt)", white(0.4), codeFont)])
   }
   drawTranscript(ctx, lines, in: CGRect(x: r.minX + 22, y: welcome.maxY + 12, width: r.width - 44, height: box.minY - welcome.maxY - 20))
 }
@@ -535,7 +701,7 @@ func drawMenuBar(_ ctx: CGContext) {
     draw(ctx, l, x: x, baseline: r.minY + 17)
     x += width(l) + 20
   }
-  let clock = makeLine([Span("Thu Sep 24   9:41 AM", white(0.88), sans(13, .medium))])
+  let clock = makeLine([Span("Thu 9:41 AM", white(0.88), sans(13, .medium))])
   draw(ctx, clock, x: r.maxX - 16 - width(clock), baseline: r.minY + 17)
   // Touch Bar Buddies' own menu-bar icon: Clawd's silhouette.
   let rows = ["..########..", "..#.####.#..", "############", "############", "..########..", "..########..", "..#.#..#.#..", "..#.#..#.#.."]
@@ -553,10 +719,10 @@ func drawDock(_ ctx: CGContext, _ t: Double) {
   stroke(ctx, rounded(dockRect.insetBy(dx: 0.5, dy: 0.5), 16), white(0.2), 1)
   for (k, icon) in dockIcons.enumerated() {
     var r = dockIconRect(k)
-    if let app = icon.app, let tap = event("tap", app) {
+    if let app = icon.app, let tap = tlEvents.first(where: { $0.kind == "tap" && $0.who == app }) {
       // Bounce while the app launches, then show the "running" dot.
       let open = event("open", app)?.t ?? .infinity
-      if t >= tap.t && t < open + 0.2 { r.origin.y -= abs(sin(CGFloat(t - tap.t) * .pi / 0.42)) * 16 }
+      if t >= tap.t && t < open + 0.25 { r.origin.y -= abs(sin(CGFloat(t - tap.t) * .pi / 0.42)) * 16 }
       if t >= open { fill(ctx, CGPath(ellipseIn: CGRect(x: r.midX - 2.5, y: dockRect.maxY - 6, width: 5, height: 5), transform: nil), white(0.8)) }
     }
     drawImage(ctx, icon.image, r)
@@ -582,24 +748,25 @@ func drawWindow(_ ctx: CGContext, _ t: Double, app: String, target: CGRect, _ bo
 }
 
 func drawConfetti(_ ctx: CGContext, _ t: Double) {
-  guard let done = workTime("codex", false), t >= done, t < done + 3 else { return }
-  var rng = SplitMix(state: 42)
-  let age = CGFloat(t - done)
-  for _ in 0..<110 {
-    let x0 = rng.range(display.minX, display.maxX), delay = rng.range(0, 0.35)
-    let vx = rng.range(-70, 70), vy = rng.range(40, 260), spin = rng.range(-9, 9), w = rng.range(7, 11)
-    let color = confettiColors[Int(rng.next() * CGFloat(confettiColors.count)) % confettiColors.count]
-    let a = age - delay
-    guard a > 0 else { continue }
-    let p = CGPoint(x: x0 + vx * a, y: display.minY + menuH - 10 + vy * a + 260 * a * a)
-    ctx.saveGState()
-    ctx.translateBy(x: p.x, y: p.y)
-    ctx.rotate(by: spin * a)
-    ctx.scaleBy(x: 1, y: abs(cos(spin * a * 0.7)) * 0.8 + 0.2)
-    ctx.setAlpha(clamp01(3 - a))
-    ctx.setFillColor(color)
-    ctx.fill(CGRect(x: -w / 2, y: -w * 0.35, width: w, height: w * 0.7))
-    ctx.restoreGState()
+  for (n, e) in events("confetti").enumerated() where t >= e.t && t < e.t + 3 {
+    var rng = SplitMix(state: 42 + UInt64(n))
+    let age = CGFloat(t - e.t)
+    for _ in 0..<120 {
+      let x0 = rng.range(display.minX, display.maxX), delay = rng.range(0, 0.35)
+      let vx = rng.range(-70, 70), vy = rng.range(40, 260), spin = rng.range(-9, 9), w = rng.range(7, 11)
+      let color = confettiColors[Int(rng.next() * CGFloat(confettiColors.count)) % confettiColors.count]
+      let a = age - delay
+      guard a > 0 else { continue }
+      let p = CGPoint(x: x0 + vx * a, y: display.minY + menuH - 10 + vy * a + 260 * a * a)
+      ctx.saveGState()
+      ctx.translateBy(x: p.x, y: p.y)
+      ctx.rotate(by: spin * a)
+      ctx.scaleBy(x: 1, y: abs(cos(spin * a * 0.7)) * 0.8 + 0.2)
+      ctx.setAlpha(clamp01(3 - a))
+      ctx.setFillColor(color)
+      ctx.fill(CGRect(x: -w / 2, y: -w * 0.35, width: w, height: w * 0.7))
+      ctx.restoreGState()
+    }
   }
 }
 
@@ -632,7 +799,7 @@ func drawDisplay(_ ctx: CGContext, _ t: Double) {
   if let title = event("title") {
     let end = title.t + (title.dur ?? 2)
     let a = t < end - 0.5 ? 1 : clamp01(CGFloat(end - t) / 0.5)
-    drawTitle(ctx, "Touch Bar Buddies", [Span("Clawd & Codex live in your Touch Bar", white(0.78), sans(30))],
+    drawTitle(ctx, "Touch Bar Buddies", [Span("Codex & Clawd live in your Touch Bar", white(0.78), sans(30))],
               alpha: a, rise: -14 * (1 - a))
   }
   drawWindow(ctx, t, app: "codex", target: codexWindow) { c, tt in drawCodexWindow(c, tt) }
@@ -715,75 +882,107 @@ func drawDeck(_ ctx: CGContext) {
   stroke(ctx, pad, rgb(78, 80, 88), 1.5)
 }
 
-func drawTouchBar(_ ctx: CGContext, _ i: Int) {
+/// Things thrown across the bar (the ball, a message, a result) are only a few pixels on the deck strip: a glowing
+/// comet there shows where they are between the lenses.
+func drawInFlight(_ ctx: CGContext, _ i: Int) {
+  for back in stride(from: 6, through: 0, by: -1) where i - back >= 0 {
+    let fade = 1 - CGFloat(back) / 7
+    for p in info(i - back).flying {
+      let c = CGPoint(x: stripToBar(CGFloat(p[0])), y: bar.maxY - CGFloat(p[1]) * barPt)
+      if back == 0 { glow(ctx, c, 26, white(0.5)) }
+      fill(ctx, CGPath(ellipseIn: CGRect(x: c.x - 3.5 * fade, y: c.y - 3.5 * fade, width: 7 * fade, height: 7 * fade), transform: nil),
+           white(0.85 * fade))
+    }
+  }
+}
+
+func drawTouchBar(_ ctx: CGContext, _ strip8: CGImage) {
   let frame = bar.insetBy(dx: -4, dy: -3)
   fill(ctx, rounded(frame, 6), rgb(4, 4, 5))
   stroke(ctx, rounded(frame.insetBy(dx: 0.5, dy: 0.5), 6), rgb(26, 27, 30), 1)
-  drawImage(ctx, stripFrame(i, scale: 2), bar)
+  drawImage(ctx, strip8, bar)
   // Touch ID button to the right.
   let tid = CGRect(x: frame.maxX + 10, y: frame.minY, width: frame.height, height: frame.height)
   fill(ctx, rounded(tid, 6), rgb(10, 10, 12))
   stroke(ctx, rounded(tid.insetBy(dx: 2.5, dy: 2.5), 5), rgb(40, 41, 45), 1)
 }
 
-// MARK: - Lenses
+// MARK: - Lens drawing
 
 func lensAppear(_ t: Double) -> CGFloat { easeOutBack(CGFloat(t - 0.15) / 0.55) }
 
-func drawCone(_ ctx: CGContext, _ lens: Lens, _ i: Int, _ t: Double) {
-  let half = lensW / zoom / 2
-  let a = stripToBar(lens.centers[i] - half), b = stripToBar(lens.centers[i] + half)
-  let src = CGRect(x: a, y: bar.minY - 2, width: b - a, height: bar.height + 4)
-  let outer = lens.rect.insetBy(dx: -8, dy: -8)
-  let alpha = clamp01(CGFloat(t - 0.15) / 0.4)
-  faded(ctx, alpha) {
-    let p = CGMutablePath()
+/// The translucent beams from the part of the strip each lens shows up to the lens (one shape where they overlap).
+func drawCones(_ ctx: CGContext, _ ls: [Lens], _ t: Double) {
+  let p = CGMutablePath()
+  var sources: [CGRect] = []
+  for l in ls {
+    let a = stripToBar(l.center - l.halfView), b = stripToBar(l.center + l.halfView)
+    let src = CGRect(x: a, y: bar.minY - 2, width: b - a, height: bar.height + 4)
+    sources.append(src)
+    let outer = l.rect.insetBy(dx: -8, dy: -8)
     p.addLines(between: [CGPoint(x: src.minX, y: src.maxY), CGPoint(x: src.maxX, y: src.maxY),
                          CGPoint(x: outer.maxX - 20, y: outer.minY + 2), CGPoint(x: outer.minX + 20, y: outer.minY + 2)])
     p.closeSubpath()
+  }
+  faded(ctx, clamp01(CGFloat(t - 0.15) / 0.4)) {
     ctx.saveGState()
     ctx.addPath(p)
     ctx.clip()
-    ctx.drawLinearGradient(gradient([white(0.16), white(0.03)]), start: CGPoint(x: 0, y: src.maxY), end: CGPoint(x: 0, y: outer.minY), options: [])
+    ctx.drawLinearGradient(gradient([white(0.16), white(0.03)]), start: CGPoint(x: 0, y: bar.maxY), end: CGPoint(x: 0, y: lensY - 8), options: [])
     ctx.restoreGState()
-    stroke(ctx, rounded(src, 4), white(0.75), 1.5)
+    for s in sources { stroke(ctx, rounded(s, 4), white(0.75), 1.5) }
   }
 }
 
-func drawLens(_ ctx: CGContext, _ lens: Lens, _ i: Int, _ t: Double, _ strip8: CGImage) {
+func drawLenses(_ ctx: CGContext, _ ls: [Lens], _ t: Double, _ strip8: CGImage) {
   let s = lensAppear(t)
   guard s > 0.01 else { return }
-  let r = lens.rect
-  scaled(ctx, 0.8 + 0.2 * s, around: CGPoint(x: r.midX, y: r.minY)) {
+  let m = ls[0].merge
+  scaled(ctx, 0.8 + 0.2 * s, around: CGPoint(x: W / 2, y: lensY)) {
     faded(ctx, clamp01(s * 1.5)) {
-      let outer = r.insetBy(dx: -8, dy: -8)
-      ctx.saveGState()
-      ctx.setShadow(offset: CGSize(width: 0, height: -16), blur: 40, color: black(0.7))
-      fillVertical(ctx, rounded(outer, 30), [rgb(226, 228, 233), rgb(150, 154, 162)])
-      ctx.restoreGState()
-      stroke(ctx, rounded(outer.insetBy(dx: 0.75, dy: 0.75), 29), white(0.7), 1.5)
-
-      ctx.saveGState()
-      ctx.addPath(rounded(r, 23))
-      ctx.clip()
-      ctx.setFillColor(black(1))
-      ctx.fill(r)
-      // The 8× frame, 1:1 and snapped to whole pixels so nothing gets resampled.
-      let x = (r.midX - lens.centers[i] * zoom).rounded()
-      drawImage(ctx, strip8, CGRect(x: x, y: r.minY, width: CGFloat(strip8.width), height: CGFloat(strip8.height)), quality: .none)
-      // A little glass sheen.
-      ctx.drawLinearGradient(gradient([white(0.10), white(0)]), start: CGPoint(x: 0, y: r.minY), end: CGPoint(x: 0, y: r.minY + 90), options: [])
-      ctx.restoreGState()
-      stroke(ctx, rounded(r.insetBy(dx: -0.5, dy: -0.5), 23), black(0.8), 2)
-
-      // Name tag on the frame's bottom edge.
-      let name = makeLine([Span(lens.label, white(0.95), sans(17, .semibold))])
-      let tagW = width(name) + 42
-      let tag = CGRect(x: lens.isLeft ? outer.minX + 26 : outer.maxX - 26 - tagW, y: outer.maxY - 15, width: tagW, height: 30)
-      fill(ctx, rounded(tag, 15), rgb(20, 21, 25))
-      stroke(ctx, rounded(tag.insetBy(dx: 0.5, dy: 0.5), 15), white(0.25), 1)
-      fill(ctx, CGPath(ellipseIn: CGRect(x: tag.minX + 13, y: tag.midY - 5, width: 10, height: 10), transform: nil), lens.color)
-      draw(ctx, name, x: tag.minX + 30, baseline: tag.midY + 6)
+      // Frames first, so where the two meet the pictures cover the seam.
+      for l in ls {
+        let outer = l.rect.insetBy(dx: -8, dy: -8)
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -16), blur: 40, color: black(0.7))
+        fillVertical(ctx, lensShape(l, outer, 30), [rgb(226, 228, 233), rgb(150, 154, 162)])
+        ctx.restoreGState()
+        stroke(ctx, lensShape(l, outer.insetBy(dx: 0.75, dy: 0.75), 29), white(0.7 * (1 - m)), 1.5)
+      }
+      if m > 0 {
+        let whole = ls[0].rect.union(ls[1].rect).insetBy(dx: -8, dy: -8)
+        stroke(ctx, rounded(whole.insetBy(dx: 0.75, dy: 0.75), 29), white(0.7 * m), 1.5)
+      }
+      for l in ls {
+        let r = l.rect
+        ctx.saveGState()
+        ctx.addPath(lensShape(l, r, 23))
+        ctx.clip()
+        ctx.setFillColor(black(1))
+        ctx.fill(r)
+        // The 8× frame, 1:1 and snapped to whole pixels so nothing gets resampled.
+        let x = (r.midX - l.center * zoom).rounded()
+        drawImage(ctx, strip8, CGRect(x: x, y: r.minY, width: CGFloat(strip8.width), height: CGFloat(strip8.height)), quality: .none)
+        // A little glass sheen.
+        ctx.drawLinearGradient(gradient([white(0.10), white(0)]), start: CGPoint(x: 0, y: r.minY), end: CGPoint(x: 0, y: r.minY + 90), options: [])
+        ctx.restoreGState()
+        stroke(ctx, lensShape(l, r.insetBy(dx: -0.5, dy: -0.5), 23), black(0.8 * (1 - m)), 2)
+      }
+      if m > 0 {
+        let whole = ls[0].rect.union(ls[1].rect)
+        stroke(ctx, rounded(whole.insetBy(dx: -0.5, dy: -0.5), 23), black(0.8 * m), 2)
+      }
+      // Name tags on the frame's bottom edge.
+      for l in ls {
+        let outer = l.rect.insetBy(dx: -8, dy: -8)
+        let name = makeLine([Span(l.label, white(0.95), sans(17, .semibold))])
+        let tagW = width(name) + 42
+        let tag = CGRect(x: l.isLeft ? outer.minX + 26 : outer.maxX - 26 - tagW, y: outer.maxY - 15, width: tagW, height: 30)
+        fill(ctx, rounded(tag, 15), rgb(20, 21, 25))
+        stroke(ctx, rounded(tag.insetBy(dx: 0.5, dy: 0.5), 15), white(0.25), 1)
+        fill(ctx, CGPath(ellipseIn: CGRect(x: tag.minX + 13, y: tag.midY - 5, width: 10, height: 10), transform: nil), l.color)
+        draw(ctx, name, x: tag.minX + 30, baseline: tag.midY + 6)
+      }
     }
   }
 }
@@ -794,8 +993,8 @@ func drawTaps(_ ctx: CGContext, _ i: Int, _ t: Double) {
   for e in events("tap") {
     let age = CGFloat(t - e.t)
     guard age >= -0.25, age < 0.9, let who = e.who, let x = e.x else { continue }
-    let lens = who == "codex" ? lensL : lensR
-    let c = CGPoint(x: lens.screenX(CGFloat(x), i), y: lens.rect.maxY - 12 * zoom)
+    let lens = lensShowing(who, CGFloat(x), i)
+    let c = CGPoint(x: lens.screenX(CGFloat(x)), y: lens.rect.maxY - 12 * zoom)
     if age < 0 {
       // Fingertip coming down.
       let u = 1 + age / 0.25
@@ -834,21 +1033,21 @@ func bubbleSpans(_ s: String, _ font: NSFont) -> [Span] {
 }
 
 func drawBubbles(_ ctx: CGContext, _ i: Int, _ t: Double) {
-  let f = tl.frames[i]
+  let f = info(i)
   let font = sans(29, .semibold)
   for e in events("say") {
     guard let who = e.who, let s = e.text, let dur = e.dur, t >= e.t, t <= e.t + dur else { continue }
-    let lens = lensFor(who, i)
     let b = who == "codex" ? f.codex : f.clawd
+    let lens = lensShowing(who, CGFloat(b.x), i)
     let headPt: CGFloat = who == "codex" ? 23 : 17
-    let tip = CGPoint(x: lens.screenX(CGFloat(b.x), i), y: max(lens.rect.minY + 14, lens.rect.maxY - (headPt + CGFloat(b.hop) + 4) * zoom))
+    let tip = CGPoint(x: lens.screenX(CGFloat(b.x)), y: max(lens.rect.minY + 14, lens.rect.maxY - (headPt + CGFloat(b.hop) + 4) * zoom))
 
-    let lines = wrap(s.components(separatedBy: " "), font: font, maxWidth: 390).map { makeLine(bubbleSpans($0, font)) }
+    let lines = wrap(s.components(separatedBy: " "), font: font, maxWidth: 430).map { makeLine(bubbleSpans($0, font)) }
     let lineH: CGFloat = 37
     let w = (lines.map(width).max() ?? 0) + 48, h = CGFloat(lines.count) * lineH + 26
-    // Sit above the lens, leaning toward the outside of the frame so the two sides never collide.
+    // Above the lens, leaning toward the outside so the two sides never collide.
     let lean: CGFloat = who == "codex" ? -40 : 40
-    let minX = lens.isLeft ? 26 : W / 2 + 150, maxX = lens.isLeft ? W / 2 - 150 : W - 26
+    let minX = who == "codex" ? 26 : W / 2 + 40, maxX = who == "codex" ? W / 2 - 40 : W - 26
     let x = min(max(tip.x - w / 2 + lean, minX), maxX - w)
     let box = CGRect(x: x, y: lens.rect.minY - 30 - h, width: w, height: h)
 
@@ -857,8 +1056,6 @@ func drawBubbles(_ ctx: CGContext, _ i: Int, _ t: Double) {
     scaled(ctx, (0.55 + 0.45 * pop) * (1 - 0.12 * out), around: tip) {
       faded(ctx, clamp01(CGFloat(t - e.t) / 0.1) * (1 - out)) {
         let tailX = min(max(tip.x, box.minX + 34), box.maxX - 34)
-        let path = CGMutablePath()
-        path.addPath(rounded(box, 24))
         let tail = CGMutablePath()
         tail.move(to: CGPoint(x: tailX - 16, y: box.maxY - 2))
         tail.addQuadCurve(to: tip, control: CGPoint(x: tailX - 4, y: (box.maxY + tip.y) / 2))
@@ -866,7 +1063,7 @@ func drawBubbles(_ ctx: CGContext, _ i: Int, _ t: Double) {
         tail.closeSubpath()
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: -8), blur: 22, color: black(0.45))
-        fill(ctx, path, white(1))
+        fill(ctx, rounded(box, 24), white(1))
         fill(ctx, tail, white(1))
         ctx.restoreGState()
         // A thin accent under the text in the speaker's color.
@@ -880,28 +1077,52 @@ func drawBubbles(_ ctx: CGContext, _ i: Int, _ t: Double) {
   }
 }
 
+func drawPill(_ ctx: CGContext, _ l: CTLine, cy: CGFloat, height h: CGFloat, alpha a: CGFloat, pad: CGFloat) {
+  let pill = CGRect(x: (W / 2 - width(l) / 2 - pad).rounded(), y: cy - h / 2, width: width(l) + 2 * pad, height: h)
+  faded(ctx, a) {
+    ctx.saveGState()
+    ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 20, color: black(0.5))
+    fill(ctx, rounded(pill, h / 2), rgb(18, 19, 24, 0.94))
+    ctx.restoreGState()
+    stroke(ctx, rounded(pill.insetBy(dx: 0.5, dy: 0.5), h / 2), white(0.18), 1)
+    draw(ctx, l, x: pill.minX + pad, baseline: pill.midY + h * 0.16)
+  }
+}
+
 func drawCaptions(_ ctx: CGContext, _ t: Double) {
   for e in events("caption") {
     guard let s = e.text, let dur = e.dur else { continue }
     let a = envelope(t, e.t, e.t + dur, 0.35, 0.35)
     guard a > 0 else { continue }
-    let l = makeLine([Span(s, white(0.97), sans(27, .semibold))])
-    let pill = CGRect(x: W / 2 - width(l) / 2 - 26, y: 968 + 10 * (1 - a), width: width(l) + 52, height: 54)
-    faded(ctx, a) {
-      ctx.saveGState()
-      ctx.setShadow(offset: CGSize(width: 0, height: -6), blur: 20, color: black(0.5))
-      fill(ctx, rounded(pill, 27), rgb(18, 19, 24, 0.92))
-      ctx.restoreGState()
-      stroke(ctx, rounded(pill.insetBy(dx: 0.5, dy: 0.5), 27), white(0.18), 1)
-      draw(ctx, l, x: pill.minX + 26, baseline: pill.midY + 9)
-    }
+    drawPill(ctx, makeLine([Span(s, white(0.97), sans(27, .semibold))]), cy: captionY + 27 + 8 * (1 - a), height: 54, alpha: a, pad: 26)
   }
+}
+
+/// "▶▶ 4×" between the lenses while a ramp plays the long runs faster.
+func drawFastForward(_ ctx: CGContext, _ i: Int) {
+  let v = speedAt(i)
+  guard v > 1.05, let top = ramps.map(\.speed).max() else { return }
+  let a = clamp01(CGFloat((v - 1) / (top - 1)) * 2) * (1 - lensTrack.merge[i])
+  let shown = ramps.filter { srcTimes[i] > $0.from - 0.4 && srcTimes[i] < $0.to + 0.4 }.map(\.speed).max() ?? top
+  let l = makeLine([Span("▶▶ ", white(0.9), sans(20, .bold)), Span(String(format: "%g×", shown), white(0.97), sans(22, .bold))])
+  drawPill(ctx, l, cy: lensY + lensH / 2, height: 44, alpha: a, pad: 20)
 }
 
 // MARK: - Frame
 
+func stripFrame(_ n: Int) -> CGImage {
+  let url = framesDir.appendingPathComponent(String(format: "%04d.png", n))
+  guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+    fail("missing frame \(url.path)")
+  }
+  return img
+}
+
 func renderFrame(_ i: Int, into ctx: CGContext) {
+  cur = i
   let t = Double(i) / fps
+  let strip8 = stripFrame(sourceFrame(i))
+  let ls = lenses(i)
   ctx.saveGState()
   ctx.translateBy(x: 0, y: H)
   ctx.scaleBy(x: 1, y: -1)
@@ -909,14 +1130,13 @@ func renderFrame(_ i: Int, into ctx: CGContext) {
   drawLid(ctx)
   drawDisplay(ctx, t)
   drawDeck(ctx)
-  drawTouchBar(ctx, i)
-  drawCone(ctx, lensL, i, t)
-  drawCone(ctx, lensR, i, t)
-  let strip8 = stripFrame(i, scale: 8)
-  drawLens(ctx, lensL, i, t, strip8)
-  drawLens(ctx, lensR, i, t, strip8)
+  drawTouchBar(ctx, strip8)
+  drawInFlight(ctx, i)
+  drawCones(ctx, ls, t)
+  drawLenses(ctx, ls, t, strip8)
   drawTaps(ctx, i, t)
   drawCaptions(ctx, t)
+  drawFastForward(ctx, i)
   drawBubbles(ctx, i, t)
   if t < 0.4 {
     ctx.setFillColor(black(1 - CGFloat(t / 0.4)))
@@ -937,42 +1157,50 @@ func writePNG(_ img: CGImage, _ url: URL) {
   CGImageDestinationFinalize(dest)
 }
 
-let frameCount = tl.frames.count
-
 // MARK: - Stills mode
 
-if args[2] == "--stills" {
-  let out = URL(fileURLWithPath: args[3])
+// COMPOSE_DEBUG=1: print the time map and the lens cameras (every 0.1 s of video) instead of drawing anything.
+if ProcessInfo.processInfo.environment["COMPOSE_DEBUG"] != nil {
+  for i in stride(from: 0, to: frameCount, by: 3) {
+    let f = info(i), ls = lenses(i)
+    print(String(format: "%.2f src %.2f  codex %.0f  L %.0f  clawd %.0f  R %.0f  c %.2f m %.2f", Double(i) / fps, srcTimes[i], f.codex.x, ls[0].center, f.clawd.x, ls[1].center, lensTrack.shared[i], ls[0].merge))
+  }
+  exit(0)
+}
+
+if args[3] == "--stills" {
+  guard args.count >= 6 else { fail("--stills <outDir> <t1,t2,…>") }
+  let out = URL(fileURLWithPath: args[4])
   try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-  for s in args[4].split(separator: ",") {
-    let i = min(frameCount - 1, Int((Double(s)! * fps).rounded()))
+  for s in args[5].split(separator: ",") {
+    guard let sec = Double(s) else { fail("\(s) isn't a number of seconds") }
+    let i = min(frameCount - 1, Int((sec * fps).rounded()))
     let ctx = makeContext(Int(W), Int(H))
     renderFrame(i, into: ctx)
     writePNG(ctx.makeImage()!, out.appendingPathComponent("still-\(s).png"))
   }
-  print("wrote stills to \(out.path)")
+  print("wrote stills to \(out.path) (the video is \(String(format: "%.1f", videoLength)) s)")
   exit(0)
 }
 
 // MARK: - Video (H.264) + GIF highlight
 
-let mp4URL = URL(fileURLWithPath: args[2])
-let gifURL = args.count > 3 ? URL(fileURLWithPath: args[3]) : nil
-let gifRange = 6.9...16.9          // seconds: small talk, packets flying, and getting to work
+let mp4URL = URL(fileURLWithPath: args[3])
+let gifURL = args.count > 4 ? URL(fileURLWithPath: args[4]) : nil
 let gifStep = 2                    // every 2nd frame → 15 fps
 let gifSize = CGSize(width: 960, height: 540)
 
 let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("demo-\(UUID().uuidString).mp4")
-let writer = try! AVAssetWriter(outputURL: tmpURL, fileType: .mp4)
+guard let writer = try? AVAssetWriter(outputURL: tmpURL, fileType: .mp4) else { fail("can't write \(tmpURL.path)") }
 let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
   AVVideoCodecKey: AVVideoCodecType.h264,
   AVVideoWidthKey: Int(W),
   AVVideoHeightKey: Int(H),
   AVVideoCompressionPropertiesKey: [
-    AVVideoAverageBitRateKey: 3_000_000,   // ~12 MB for 30 s: small enough to keep in git
+    AVVideoAverageBitRateKey: 2_600_000,   // ~10 MB for 30 s: small enough to keep in git
     AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
     AVVideoMaxKeyFrameIntervalKey: 60,
-    AVVideoExpectedSourceFrameRateKey: tl.fps,
+    AVVideoExpectedSourceFrameRateKey: Int(fps),
   ],
   AVVideoColorPropertiesKey: [
     AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
@@ -1007,19 +1235,19 @@ for i in 0..<frameCount {
     gifFrames.append(small.makeImage()!)
   }
   CVPixelBufferUnlockBaseAddress(pb, [])
-  adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(tl.fps)))
-  if i % 60 == 0 { print("frame \(i)/\(frameCount)") }
+  adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps)))
+  if i % 90 == 0 { print("frame \(i)/\(frameCount)") }
 }
 input.markAsFinished()
 let done = DispatchSemaphore(value: 0)
 writer.finishWriting { done.signal() }
 done.wait()
-guard writer.status == .completed else { print("video failed: \(String(describing: writer.error))"); exit(1) }
+guard writer.status == .completed else { fail("video failed: \(String(describing: writer.error))") }
 let fm = FileManager.default
-if fm.fileExists(atPath: mp4URL.path) { _ = try! fm.replaceItemAt(mp4URL, withItemAt: tmpURL) } else { try! fm.moveItem(at: tmpURL, to: mp4URL) }
-print("wrote \(mp4URL.path)")
+if fm.fileExists(atPath: mp4URL.path) { _ = try? fm.replaceItemAt(mp4URL, withItemAt: tmpURL) } else { try? fm.moveItem(at: tmpURL, to: mp4URL) }
+print("wrote \(mp4URL.path) (\(String(format: "%.1f", videoLength)) s)")
 
-if let gifURL {
+if let gifURL, !gifFrames.isEmpty {
   let dest = CGImageDestinationCreateWithURL(gifURL as CFURL, UTType.gif.identifier as CFString, gifFrames.count, nil)!
   let gif = kCGImagePropertyGIFDictionary as String
   CGImageDestinationSetProperties(dest, [gif: [kCGImagePropertyGIFLoopCount as String: 0]] as CFDictionary)
