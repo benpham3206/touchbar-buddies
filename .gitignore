@@ -1,0 +1,11 @@
+# Build output
+build/
+dist/
+*.zip
+
+# Third-party artwork (Anthropic's Clawd, OpenAI's Codex pet) is never committed.
+# The app extracts it on first launch from the user's own installed apps.
+assets/
+Resources/
+
+.DS_Store
