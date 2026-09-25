@@ -31,7 +31,10 @@ final class Buddy {
   var stepStart: Double = 0
   var state = AgentState()             // what the buddy acts out
   var reported = AgentState()          // what the activity monitor says (state = this + the secret ultra boost)
-  var launching = false
+  var launchUntil: Double = 0          // a tap is opening its app: the entrance plays until then (see Scene.launch)
+  var playing = false                  // in a game, whatever its app is doing; Scene.end() sends it back to that
+  var carry: Effect? = nil             // something it takes across the bar (a message, a result), held over its head
+  var carryOffset: CGVector?           // where it's held, from the buddy's feet (eased between poses)
   var taps: [Double] = []
   var nextIdle: Double = 3
   var nextBlink: Double = 2
@@ -50,14 +53,29 @@ final class Buddy {
   enum Base { case sleep, idle, work }
   var base: Base { !state.present ? .sleep : state.working ? .work : .idle }
   var busy: Bool { step != nil || !queue.isEmpty }
+  /// What it shows with nothing queued: its base pose, but a buddy in a game stands around between its beats
+  /// (no typing, no snoozing) until the game sends it back.
+  var pose: Base { playing ? .idle : base }
   var home: CGFloat { pocket.midX + (who == .clawd && base == .work ? -5 : 0) }
   var inPocket: Bool { abs(x - pocket.midX) < pocket.width / 2 + 4 }
 
+  /// Out on the bar, away from its pocket. Hiding behind the button next to it doesn't count: then nothing of it
+  /// is drawn outside the pocket.
+  var abroad: Bool {
+    guard !inPocket else { return false }
+    if let r = step?.clipRect, r.minX >= pocket.minX - 1, r.maxX <= pocket.maxX + 1 { return false }
+    return true
+  }
+
   func enqueue(_ steps: [Step]) { queue.append(contentsOf: steps) }
 
+  /// Drops everything queued. An entrance or an errand that gets cut short is over too, so nothing is left
+  /// waiting on it (a "launching" flag that outlived its entrance used to swallow every later tap).
   func interrupt() {
     queue.removeAll()
     step = nil
+    launchUntil = 0
+    carry = nil
   }
 
   func update(_ now: Double, _ dt: Double) {
@@ -125,6 +143,7 @@ struct Projectile {
   var wobble: CGFloat = 0
   var trail: CGColor? = nil            // leaves a faint sparkle trail
   var onArrive: (() -> Void)?
+  var game = 0                         // the game that threw it (a called-off game's things vanish)
 }
 
 // MARK: - Scene
@@ -141,15 +160,28 @@ final class Scene {
   var onLaunch: ((Who) -> Void)?
   var onFocus: ((Who) -> Void)?
 
+  /// The games by name: Play Together picks one at random, and the menu bar's Play submenu lists them all.
+  static let games: [(title: String, command: String)] = [
+    ("Wave", "wave"), ("Catch", "toss"), ("Paper Plane", "plane"), ("Echo Hops", "echo"), ("Packets", "packets"),
+    ("Peek-a-boo", "peek"), ("Clawd Visits Codex", "visit-clawd"), ("Codex Visits Clawd", "visit-codex"),
+    ("Codex's Victory Sprint", "visit-codex-sprint"), ("Codex Sneaks Up on Clawd", "visit-codex-sneak"),
+    ("Codex Runs a Lap", "visit-codex-lap"), ("Codex Trips Over", "visit-codex-trip"),
+  ]
+
   private var particles: [Particle] = []
   private var projectiles: [Projectile] = []
-  private var timers: [(at: Double, run: () -> Void)] = []
+  private var timers: [(at: Double, game: Int, run: () -> Void)] = []
   private var interacting = false
   private var interactionStart: Double = 0
+  private var game = 0                           // numbers the games; timers set during one carry its number
   private var nextInteraction: Double = 12
   private var laidOut = false
   private var boostUntil: Double = 0             // the secret two-buddy hold: both work in ultra mode until then
-  private var nextSender: Who = .codex           // messages between two busy buddies take turns
+  private var welcomeDue = false                 // welcomeBack() was called: play it on the next frame
+  // Errands between two busy buddies (see delegate()).
+  private var nextSender: Who = .codex           // they take turns handing work over
+  private var delegatedBy: [Who: Who] = [:]      // who handed work to whom: receiver → sender
+  private var pendingDelivery: (courier: Who, to: Who)?
   /// Codex's typing symbols. One consistent set, and no angle brackets.
   private let codeBits = ["{", "}", "(", ")", ";"]
 
@@ -159,8 +191,8 @@ final class Scene {
   enum Pace { case asleep, calm, lively, fast }
   var pace: Pace {
     let both = [clawd, codex]
-    if !projectiles.isEmpty || both.contains(where: { !$0.inPocket }) { return .fast }       // flying across the bar
-    if both.allSatisfy({ $0.base == .sleep && !$0.busy }) { return .asleep }                 // just Zzz
+    if !projectiles.isEmpty || both.contains(where: { $0.abroad }) { return .fast }          // something crosses the bar
+    if both.allSatisfy({ $0.pose == .sleep && !$0.busy }) { return .asleep }                 // just Zzz
     if !particles.isEmpty || both.contains(where: { $0.state.ultra || $0.hop > 0 || $0.step?.moveTo != nil }) { return .lively }
     return .calm                                                                              // sprites tick at ~12 fps
   }
@@ -183,12 +215,17 @@ final class Scene {
     laidOut = true
   }
 
-  func after(_ delay: Double, _ run: @escaping () -> Void) { timers.append((now + delay, run)) }
+  /// Runs `run` after `delay` seconds of scene time. Set during a game, it belongs to that game (see cancelGame).
+  func after(_ delay: Double, _ run: @escaping () -> Void) { timers.append((now + delay, interacting ? game : 0, run)) }
 
   private func other(_ b: Buddy) -> Buddy { b === clawd ? codex : clawd }
+  private func buddy(_ who: Who) -> Buddy { who == .clawd ? clawd : codex }
 
   /// A buddy whose sprites couldn't be extracted stays asleep and hidden (never drawn, never tapped).
   func has(_ b: Buddy) -> Bool { b.who == .clawd ? bank.hasClawd : bank.hasCodex }
+
+  /// A tap is opening the buddy's app and its entrance is playing.
+  private func launching(_ b: Buddy) -> Bool { now < b.launchUntil }
 
   // MARK: Agent state
 
@@ -221,37 +258,42 @@ final class Scene {
     }
   }
 
+  /// The app opened (not from a tap): the buddy makes its entrance.
   private func arrive(_ b: Buddy) {
-    guard !b.launching else { return }       // the launch script is already playing the entrance
+    guard !launching(b) else { return }       // the tap-to-open entrance is already playing
     b.interrupt()
+    b.playing = false
     b.x = b.home
-    if b.who == .clawd {
-      // Clawd's "load in" animation from the Claude app: hops on a little cloud, then off again.
-      b.enqueue([Step(clip: bank.cCloudIntro)])
-    } else {
-      b.enqueue([Step(clip: bank.xJump), Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2)])
-    }
+    b.enqueue(b.who == .clawd ? clawdEntrance() : codexEntrance())
     if b.state.working { startWork(b) }
   }
 
   private func fallAsleep(_ b: Buddy) {
-    guard !b.launching else { return }
+    delegatedBy[b.who] = nil                  // its agent is gone: no result to bring back
+    if pendingDelivery?.courier == b.who { pendingDelivery = nil }
+    guard !launching(b) else { return }
     b.interrupt()
+    b.playing = false
     b.x = b.home
     b.hop = 0
     puff(at: CGPoint(x: b.x, y: ground + 6), color: Palette.white)
   }
 
   private func startWork(_ b: Buddy) {
-    if !b.inPocket {
+    let wasPlaying = b.playing, g = game
+    b.playing = false                         // work comes first; a game goes on without it
+    if b.abroad {
+      // Out on the bar: hurry home. (Behind a button it finishes what it's doing, which ends at home anyway.)
       b.interrupt()
-      b.enqueue([Step(moveTo: b.home, speed: 160, run: true)])
+      b.enqueue([Step(moveTo: b.home, speed: 160, run: true, onEnd: {
+        if wasPlaying && self.interacting && self.game == g { self.end() }   // its game can't finish without it
+      })])
     }
     b.enqueue([Step(moveTo: b.home, speed: 40, run: true)])
     if b.who == .clawd { b.enqueue([Step(clip: bank.cWorkIn, face: b.home + 50)]) }
     else { b.enqueue([Step(clip: bank.xJump)]) }
-    // Both at their laptops now: the first message shouldn't take long.
-    if other(b).base == .work && !interacting { nextInteraction = min(nextInteraction, now + .random(in: 4...6)) }
+    // Both at their laptops now: the first errand shouldn't take long.
+    if other(b).base == .work && !interacting { nextInteraction = min(nextInteraction, now + .random(in: 8...12)) }
   }
 
   // MARK: Ultra / ultracode
@@ -321,7 +363,8 @@ final class Scene {
 
   private func finishWork(_ b: Buddy) {
     if b.who == .clawd {
-      b.enqueue([Step(clip: bank.cWorkOut), happyHop(b), happyHop(b)])
+      // (Away from his laptop in a game or on an errand, there's no laptop to close.)
+      b.enqueue((b.playing ? [] : [Step(clip: bank.cWorkOut)]) + [happyHop(b), happyHop(b)])
     } else {
       b.enqueue([Step(clip: bank.xReview), Step(clip: bank.xReview)])
     }
@@ -330,24 +373,121 @@ final class Scene {
     if o.base == .idle && !o.busy && !interacting {
       after(0.7) { o.enqueue([self.cheer(o, toward: b)]) }
     }
+    // It was doing work the other one handed over: it brings back the result in person (see update()).
+    if let sender = delegatedBy.removeValue(forKey: b.who) { pendingDelivery = (b.who, sender) }
+  }
+
+  // MARK: Entrances
+
+  /// Clawd's "load in" from the Claude app: he hops on his little cloud, rides it (until `ready`, when a tap is
+  /// still opening the app) and hops off again, then a happy hop and a wave to Codex.
+  private func clawdEntrance(until ready: (() -> Bool)? = nil) -> [Step] {
+    let c = clawd
+    var wave = waveStep(c, toward: codex.x)
+    wave.onStart = { self.greet(c) }
+    return [Step(clip: bank.cCloudMount),
+            ready.map { Step(clip: bank.cCloudRide, loop: true, hold: 30, until: $0) } ?? Step(clip: bank.cCloudRide),
+            Step(clip: bank.cCloudDismount),
+            Step(clip: bank.cHappy, hold: 0.6, hopV: 60, onStart: { self.sparkle(at: CGPoint(x: c.x, y: 20)) }),
+            wave]
+  }
+
+  /// Codex's entrance: up with a start, off behind the brightness button to get ready, and back in at a run; then a
+  /// jump, a wave to you and a little celebration. With `ready` (a tap is still opening the app) he waits in the
+  /// wings, peeking out, until it's true.
+  private func codexEntrance(until ready: (() -> Bool)? = nil) -> [Step] {
+    let x = codex, p = x.pocket
+    let wings = p.minX - 14, peek = p.minX - 1
+    var steps = [
+      Step(clip: bank.xJump, onStart: { self.emit(.bitmap(Sprite.bang, Palette.gold), at: CGPoint(x: x.x + 10, y: 23), vy: 8, life: 0.6) }),
+      Step(clip: bank.xRunL.still(1), hold: 0.1),
+      run(-1, to: wings, speed: 140, clipRect: p, onStart: { self.puff(at: CGPoint(x: x.x + 6, y: self.ground + 3), color: Palette.white) }),
+    ]
+    if let ready {
+      steps += [Step(clip: bank.xIdle, hold: 0.3, clipRect: p),
+                Step(clip: bank.codexLook(degrees: 67.5), moveTo: peek, speed: 24, clipRect: p),     // leans out to look
+                Step(clip: bank.codexLook(degrees: 67.5), hold: 30, clipRect: p, until: ready)]
+      steps += dash(x, from: peek, to: x.home, clipRect: p)
+    } else {
+      steps += [Step(clip: bank.xIdle, hold: 0.45, clipRect: p)]
+      steps += dash(x, from: wings, to: x.home, clipRect: p)
+    }
+    return steps + [
+      Step(clip: bank.xJump, onStart: { self.sparkle(at: CGPoint(x: x.x, y: 22)) }),
+      Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2, onStart: { self.greet(x) }),
+      Step(clip: bank.xReview, onStart: { self.confetti(at: CGPoint(x: x.x, y: 16)) }),
+    ]
+  }
+
+  /// The other buddy waves back, if it's free.
+  private func greet(_ b: Buddy) {
+    let o = other(b)
+    guard has(o), o.base == .idle, !o.busy, !interacting else { return }
+    o.enqueue([waveStep(o, toward: b.x)])
+  }
+
+  /// The Mac was just unlocked: the awake buddies make an entrance. Both peek in from behind the buttons next to
+  /// their pockets; then Clawd walks in, Codex comes running, and both wave. It plays on the next frame, once the
+  /// scene clock has caught up with the time spent locked.
+  func welcomeBack() { welcomeDue = true }
+
+  private func welcome() {
+    let c = clawd, x = codex
+    let cast = [c, x].filter { has($0) && $0.base != .sleep && !launching($0) }
+    guard !cast.isEmpty else { return }
+    cancelGame()
+    begin(cast)
+    var left = cast.count
+    let bow = { (b: Buddy) in                  // each goes back to what it was doing as soon as it's done
+      b.playing = false
+      b.enqueue(self.backToBase(b))
+      left -= 1
+      if left == 0 { self.end() }
+    }
+    let heart = { (b: Buddy) in self.emit(.bitmap(Sprite.heart, Palette.heart), at: CGPoint(x: b.x, y: 22), vy: 14) }
+    for b in cast { b.interrupt() }
+    if cast.contains(where: { $0 === c }) {
+      let edge = c.pocket.minX
+      c.x = edge - 13
+      var wave = waveStep(c, toward: x.x)
+      wave.onStart = { heart(c) }
+      wave.onEnd = { bow(c) }
+      c.enqueue([
+        Step(clip: bank.cStand, hold: 0.2, clipRect: CGRect(x: edge, y: 0, width: 0, height: 0)),     // out of sight
+        Step(clip: bank.cLurk.slice(5...28), clipRect: c.pocket, leftEdge: edge),                      // peeks in…
+        Step(moveTo: c.pocket.midX, speed: 30, run: true, clipRect: c.pocket, onStart: { c.x = edge + 1 }),   // …walks in
+        Step(clip: bank.cHappy, hold: 0.45, hopV: 55),
+        wave,
+      ])
+    }
+    if cast.contains(where: { $0 === x }) {
+      let p = x.pocket, peek = p.minX - 1
+      x.x = p.minX - 14
+      x.enqueue([Step(clip: bank.xIdle, hold: 0.3, clipRect: p),
+                 Step(clip: bank.codexLook(degrees: 67.5), moveTo: peek, speed: 24, clipRect: p),                  // peeks in…
+                 Step(clip: bank.codexLook(degrees: 67.5), hold: cast.count == 2 ? 1.9 : 0.6, clipRect: p)]         // (in time with Clawd)
+                + dash(x, from: peek, to: p.midX, clipRect: p)                                                   // …runs in
+                + [Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2),
+                   Step(clip: bank.xJump, onStart: { heart(x) }, onEnd: { bow(x) })])
+    }
   }
 
   // MARK: Touch
 
   func tap(_ who: Who) {
-    let b = who == .clawd ? clawd : codex
+    let b = buddy(who)
     guard has(b) else { return }
     guard b.state.appRunning else { launch(b); return }
     b.taps = b.taps.filter { now - $0 < 1.5 } + [now]
-    if b.base == .work {
-      // Don't break their focus — a little hop and a heart.
+    if b.base == .work || launching(b) {
+      // Don't break their focus (or their entrance): a little hop and a heart.
       b.hopV = 45; b.hop = max(b.hop, 0.01)
       emit(.bitmap(Sprite.heart, Palette.heart), at: CGPoint(x: b.x + 6, y: 20), vy: 16)
       return
     }
     if b.taps.count >= 4 {
       b.taps.removeAll()
-      b.interrupt()
+      recall(b)
       if b.who == .codex {
         b.enqueue([Step(clip: bank.xFailed)])
       } else {
@@ -362,40 +502,37 @@ final class Scene {
       }
       return
     }
-    b.interrupt()
+    recall(b)
     b.enqueue(b.who == .codex ? [Step(clip: bank.xJump)] : [Step(clip: bank.cSquat, hold: 0.08), happyHop(b)])
     emit(.bitmap(Sprite.heart, Palette.heart), at: CGPoint(x: b.x + 8, y: 21), vy: 18)
   }
 
   func longPress(_ who: Who) {
-    let b = who == .clawd ? clawd : codex
+    let b = buddy(who)
     guard has(b) else { return }
     guard b.state.appRunning else { launch(b); return }
     onFocus?(who)
-    guard b.base != .work else { return }
-    b.interrupt()
+    guard b.base != .work, !launching(b) else { return }
+    recall(b)
     b.enqueue([waveStep(b, toward: b.x - 1)])
   }
 
-  /// Tapping a sleeping buddy opens its app; the buddy plays its entrance until the app is up.
+  /// Tapping a buddy whose app is closed opens it. Every tap asks again (opening an app that's already on its way
+  /// is harmless); the entrance starts once and plays until the app is up.
   private func launch(_ b: Buddy, open: Bool = true) {
-    guard !b.launching else { return }
-    b.launching = true
-    b.interrupt()
-    b.x = b.home
     if open { onLaunch?(b.who) }
+    guard !launching(b) else { return }       // its entrance is already playing
+    b.interrupt()
+    b.playing = false
+    b.x = b.home
+    b.launchUntil = now + 40                  // a time limit, so a lost entrance can never block taps for long
     let t0 = now
-    let ready = { [unowned self] in b.state.appRunning && self.now - t0 > 1.4 }
-    if b.who == .codex {
-      // Same hop the Codex pet does when you hover it.
-      b.enqueue([Step(clip: bank.xJump, loop: true, hold: 30, until: ready),
-                 Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2, onEnd: { b.launching = false })])
-    } else {
-      b.enqueue([Step(clip: bank.cCloudMount),
-                 Step(clip: bank.cCloudRide, loop: true, hold: 30, until: ready),
-                 Step(clip: bank.cCloudDismount),
-                 Step(clip: bank.cHappy, hold: 0.6, hopV: 60, onEnd: { b.launching = false })])
-    }
+    // Codex waits in the wings, peeking out: give him a moment there even when the app is quick.
+    let ready = { [unowned self] in b.state.appRunning && self.now - t0 > (b.who == .codex ? 2.6 : 1.4) }
+    var steps = b.who == .clawd ? clawdEntrance(until: ready) : codexEntrance(until: ready)
+    let last = steps[steps.count - 1].onEnd
+    steps[steps.count - 1].onEnd = { last?(); b.launchUntil = 0 }
+    b.enqueue(steps)
     sparkle(at: CGPoint(x: b.x, y: 20))
   }
 
@@ -415,34 +552,63 @@ final class Scene {
   /// `swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("dev.touchbarbuddies.command"), object: "toss", userInfo: nil, deliverImmediately: true)'`
   func command(_ cmd: String) {
     let (a, b) = (codex, clawd)
-    func go(_ f: () -> Void) { guard has(a) && has(b) else { return }; a.interrupt(); b.interrupt(); begin(); f() }
+    func go(_ f: @escaping () -> Void) { play(f) }
     switch cmd {
     case "play": playTogether()
-    case "wave": go { waveHello(a, b) }
-    case "toss": go { toss(a, b, volleys: 3) }
-    case "plane": go { paperPlane(b, a) }
-    case "echo": go { echoHops(a, b, rounds: 2) }
-    case "packets": go { packets() }
-    case "peek": go { peekaboo(); after(6.5) { self.end() } }
-    case "visit-clawd": go { clawdVisits() }
-    case "visit-codex": go { codexVisits() }
-    case "visit-clawd-car": go { clawdVisits(car: true) }
-    case "visit-clawd-cloud": go { clawdVisits(car: false) }
+    case "wave": go { self.waveHello(a, b) }
+    case "toss": go { self.toss(a, b, volleys: 3) }
+    case "plane": go { self.paperPlane(b, a) }
+    case "echo": go { self.echoHops(a, b, rounds: 2) }
+    case "packets": go { self.packets() }
+    case "peek": go { self.peekaboo(); self.after(6.5) { self.end() } }
+    case "visit-clawd": go { self.clawdVisits() }
+    case "visit-clawd-car": go { self.clawdVisits(car: true) }
+    case "visit-clawd-cloud": go { self.clawdVisits(car: false) }
+    case "visit-codex": go { self.codexVisits() }
+    case "visit-codex-sprint": go { self.codexSprints() }
+    case "visit-codex-sneak": go { self.codexSneaks() }
+    case "visit-codex-lap": go { self.codexLap() }
+    case "visit-codex-trip": go { self.codexTrips() }
+    case "zoomies": habit(a) { zoomies(a) }
+    case "stargaze": habit(a) { stargaze(a) }
+    case "dance": habit(a) { dance(a) }
+    case "peek-codex": habit(a) { codexPeek(a) }
+    case "cheer-visit":   // the idle one visits the busy one
+      if a.base != b.base, let w = [a, b].first(where: { $0.base == .work }), other(w).base == .idle {
+        cancelGame(); begin([other(w)]); cheerInPerson(other(w), w)
+      }
+    case "welcome": welcomeBack()
+    case "delegate": if a.base == .work && b.base == .work { cancelGame(); delegate() }
+    case "deliver":   // the one last handed work brings the result back now
+      let courier = buddy(nextSender)
+      if a.base != .sleep && b.base != .sleep {
+        delegatedBy[courier.who] = nil
+        if pendingDelivery?.courier == courier.who { pendingDelivery = nil }
+        cancelGame()
+        deliver(courier, to: other(courier))
+      }
     case "tap-clawd": tap(.clawd)
     case "tap-codex": tap(.codex)
     case "launch-clawd": launch(clawd, open: false)
     case "launch-codex": launch(codex, open: false)
     case "notes": notes()
     case "ultra": ultraBoost()
-    case "message": if clawd.base == .work && codex.base == .work { sendMessage() }
     default: break
     }
   }
 
-  func playTogether() {
-    nextInteraction = now
-    if interacting { return }
-    if clawd.base == .idle && codex.base == .idle { startInteraction() }
+  /// Play Together (menu bar): a game right now, whatever the two are up to. `command` picks one of `games`;
+  /// without it, it's a random one (no visits while Visits Across the Bar is off).
+  func playTogether(_ command: String? = nil) {
+    guard let pick = command ?? Self.games.filter({ roaming || !$0.command.hasPrefix("visit") }).randomElement()?.command else { return }
+    self.command(pick)
+  }
+
+  /// One of a buddy's idle habits, right now (for commands).
+  private func habit(_ b: Buddy, _ steps: () -> [Step]) {
+    guard has(b) else { return }
+    recall(b)
+    b.enqueue(steps())
   }
 
   // MARK: Update
@@ -452,6 +618,7 @@ final class Scene {
     let due = timers.filter { $0.at <= now }
     timers.removeAll { $0.at <= now }
     due.forEach { $0.run() }
+    if welcomeDue { welcomeDue = false; welcome() }
     if boostUntil > 0 && now >= boostUntil {
       boostUntil = 0
       act(clawd)
@@ -462,16 +629,23 @@ final class Scene {
 
     for b in [clawd, codex] where has(b) {
       b.update(now, dt)
+      easeCarry(b, dt)
       if !scripted && !b.busy && b.base == .idle && !interacting { idleHabits(b) }
-      if b.base == .sleep && !b.busy && now - b.lastZ > 1.8 {
+      if b.pose == .sleep && !b.busy && now - b.lastZ > 1.8 {
         b.lastZ = now
         emit(.bitmap(Sprite.zed, Palette.white), at: CGPoint(x: b.x + 9, y: b.who == .clawd ? 11 : 18), vx: 6, vy: 5, life: 2.2, size: 0.75)
       }
-      if b.base == .work && b.state.ultra && !b.busy {
+      if b.pose == .work && b.state.ultra && !b.busy {
         ultraAura(b)
-      } else if b.who == .codex && b.base == .work && !b.busy && now > b.nextFlourish {
+      } else if b.who == .codex && b.pose == .work && !b.busy && now > b.nextFlourish {
         codeSymbol(b)
       }
+    }
+    // A finished job goes back to whoever handed it over, once the courier is done celebrating and nothing else is on.
+    if let d = pendingDelivery, !interacting, !buddy(d.courier).busy {
+      pendingDelivery = nil
+      let a = buddy(d.courier), b = buddy(d.to)
+      if a.base != .sleep && b.base != .sleep { deliver(a, to: b) }   // (not if the one who asked has gone to sleep)
     }
     if !scripted && !interacting && now > nextInteraction { direct() }
 
@@ -513,14 +687,18 @@ final class Scene {
       }
     } else {
       switch r {
-      case ..<0.30:
+      case ..<0.18:
         let dirs: [CGFloat] = [90, 45, 0, 315, 270, 135]
         let pick = Array(dirs.shuffled().prefix(3))
         b.enqueue(pick.map { Step(clip: bank.codexLook(degrees: $0), hold: .random(in: 0.5...1.1)) })
-      case ..<0.55: b.enqueue(stroll(b, to: .random(in: lo...hi)))
-      case ..<0.68: b.enqueue([Step(clip: bank.xWaiting, loop: true, hold: .random(in: 2.5...4))])
-      case ..<0.78: b.enqueue([Step(clip: bank.xJump)])
-      case ..<0.86: b.enqueue([waveStep(b, toward: clawd.x)])
+      case ..<0.32: b.enqueue(stroll(b, to: .random(in: lo...hi)))
+      case ..<0.40: b.enqueue([Step(clip: bank.xWaiting, loop: true, hold: .random(in: 2.5...4))])
+      case ..<0.46: b.enqueue([Step(clip: bank.xJump)])
+      case ..<0.52: b.enqueue([waveStep(b, toward: clawd.x)])
+      case ..<0.61: b.enqueue(zoomies(b))
+      case ..<0.69: b.enqueue(stargaze(b))
+      case ..<0.77: b.enqueue(dance(b))
+      case ..<0.84: b.enqueue(codexPeek(b))
       default: break
       }
     }
@@ -530,7 +708,7 @@ final class Scene {
 
   private func direct() {
     let c = clawd, x = codex
-    let free = { (b: Buddy) in !b.busy && !b.launching }
+    let free = { (b: Buddy) in !b.busy && !self.launching(b) }
     if c.base == .idle && x.base == .idle && free(c) && free(x) {
       startInteraction()
     } else if c.base == .work && x.base == .idle && free(x) {
@@ -538,23 +716,89 @@ final class Scene {
     } else if x.base == .work && c.base == .idle && free(c) {
       support(c, worker: x)
     } else if c.base == .work && x.base == .work && free(c) && free(x) {
-      sendMessage()
+      delegate()
     } else {
       nextInteraction = now + 5
     }
   }
 
-  private func begin() {
+  // MARK: Games
+
+  /// Starts a game: only one at a time, and it must call `end()` when it's over.
+  private func begin(_ players: [Buddy]) {
+    game += 1
     interacting = true
     interactionStart = now
+    for b in players { b.playing = true }
   }
+
+  /// The game is over: once their last steps have played, the players go back to what their apps are doing
+  /// (a working buddy sits back down at its laptop, a sleeping one goes back to sleep).
   private func end() {
     interacting = false
-    nextInteraction = now + .random(in: 14...30)
+    // Errands between two busy buddies come less often than games.
+    let bothWork = clawd.base == .work && codex.base == .work
+    nextInteraction = now + (bothWork ? .random(in: 30...60) : .random(in: 14...30))
+    for b in [clawd, codex] where b.playing {
+      b.playing = false
+      b.enqueue(backToBase(b))
+    }
+  }
+
+  /// Calls off the game in progress, with its pending beats and anything still in the air, and puts its players back.
+  private func cancelGame() {
+    guard interacting else { return }
+    timers.removeAll { $0.game == game }
+    projectiles.removeAll { $0.game == game }
+    for b in [clawd, codex] where b.playing { recall(b) }
+    end()
+  }
+
+  /// Stops whatever a buddy is doing. One that was out of its pocket (or behind a button) pops back home.
+  private func recall(_ b: Buddy) {
+    let hidden = b.step?.clipRect != nil
+    b.interrupt()
+    if hidden || b.x < b.pocket.minX + 10 || b.x > b.pocket.maxX - 10 {
+      b.x = b.home
+      puff(at: CGPoint(x: b.x, y: ground + 6), color: Palette.white)
+    }
+  }
+
+  /// After a game: back to the laptop, or back to sleep.
+  private func backToBase(_ b: Buddy) -> [Step] {
+    switch b.base {
+    case .idle: return [Step(moveTo: b.home, speed: 18, run: true)]    // (a game may have left it off-center)
+    case .work:
+      return [Step(moveTo: b.home, speed: 40, run: true)] + (b.who == .clawd ? [Step(clip: bank.cWorkIn, face: b.home + 50)] : [])
+    case .sleep:
+      return [Step(moveTo: b.home, speed: 40, run: true, onEnd: { self.puff(at: CGPoint(x: b.x, y: self.ground + 6), color: Palette.white) })]
+    }
+  }
+
+  /// Starts a game right now, whatever the two are doing (Play Together, commands). A game in progress is called
+  /// off, a sleeping buddy gets up for it and a working one leaves its laptop; `end()` sends them back after.
+  private func play(_ start: @escaping () -> Void) {
+    guard has(clawd) && has(codex) else { return }
+    cancelGame()
+    begin([clawd, codex])
+    var warmUp = 0.0
+    for b in [clawd, codex] {
+      recall(b)
+      var steps: [Step] = []
+      if b.base == .sleep {
+        puff(at: CGPoint(x: b.x, y: ground + 8), color: Palette.white)
+        steps = b.who == .clawd ? [Step(clip: bank.cSquat, hold: 0.08), happyHop(b)] : [Step(clip: bank.xJump)]
+      } else if b.base == .work && b.who == .clawd {
+        steps = [Step(clip: bank.cWorkOut)]    // closes his laptop
+      }
+      b.enqueue(steps)
+      warmUp = max(warmUp, steps.reduce(0) { $0 + ($1.hold > 0 ? $1.hold : $1.clip?.total ?? 0) })
+    }
+    if warmUp > 0 { after(warmUp + 0.1, start) } else { start() }
   }
 
   private func startInteraction() {
-    begin()
+    begin([clawd, codex])
     let (a, b) = Bool.random() ? (clawd, codex) : (codex, clawd)
     var options: [(Double, () -> Void)] = [
       (18, { self.waveHello(a, b) }),
@@ -564,8 +808,8 @@ final class Scene {
       (12, { self.packets() }),
       (8, { self.peekaboo(); self.after(6.5) { self.end() } }),
     ]
-    // Visits: Codex's run comes up as often as Clawd's kart/cloud trips.
-    if roaming { options += [(8, { self.clawdVisits() }), (8, { self.codexVisits() })] }
+    // Visits: Codex has more ways to come over than Clawd, and comes a bit more often.
+    if roaming { options += [(8, { self.clawdVisits() }), (12, { self.codexVisit() })] }
     var r = Double.random(in: 0..<options.map(\.0).reduce(0, +))
     for (w, run) in options {
       if r < w { run(); return }
@@ -575,8 +819,8 @@ final class Scene {
   }
 
   private func support(_ helper: Buddy, worker: Buddy) {
-    begin()
-    switch Int.random(in: 0..<3) {
+    begin([helper])
+    switch Int.random(in: 0..<(roaming ? 4 : 3)) {
     case 0:
       helper.enqueue([cheer(helper, toward: worker)])
       after(1.2) { self.end() }
@@ -589,34 +833,15 @@ final class Scene {
           self.end()
         }
       }
-    default:
+    case 2:
       let watch: Step = helper.who == .codex
         ? Step(clip: bank.xWaiting, loop: true, hold: 3.5)
         : Step(clip: worker.x < helper.x ? bank.cLookL : bank.cLookR, hold: 3)
       helper.enqueue([watch])
       after(3.6) { self.end() }
+    default:
+      cheerInPerson(helper, worker)
     }
-  }
-
-  /// Both are working: one sends the other a little message across the bar without looking up from the keyboard.
-  /// The receiver gives a tiny hop and keeps typing. They take turns; in ultra mode the message is violet.
-  private func sendMessage() {
-    let a = nextSender == .clawd ? clawd : codex, b = other(a)
-    nextSender = b.who
-    nextInteraction = now + .random(in: 5...9)
-    let ultra = a.state.ultra
-    let note: Effect = a.who == .clawd
-      ? .glyph("✻", ultra ? Palette.violet : Palette.clawd, 12)
-      : .bitmap(Sprite.envelope, ultra ? Palette.violet : Palette.codexLight)
-    let from = laptop(a), to = CGPoint(x: b.x + (b.who == .clawd ? 2 : 0), y: ground + 17)
-    puff(at: from, color: ultra ? Palette.violetLight : Palette.white)
-    projectiles.append(Projectile(effect: note, from: from, to: to, start: now,
-                                  duration: Double(max(0.8, abs(to.x - from.x) / 420)), arc: 8, wobble: 1.2,
-                                  trail: ultra ? Palette.violet : a.who == .clawd ? Palette.clawd : Palette.codexLight, onArrive: {
-      b.hopV = 42
-      b.hop = max(b.hop, 0.01)
-      self.sparkle(at: CGPoint(x: b.x, y: 20), color: ultra ? Palette.violetLight : Palette.gold)
-    }))
   }
 
   // MARK: Interactions
@@ -702,28 +927,45 @@ final class Scene {
       Step(clip: bank.cStand, hold: 0.4, clipRect: CGRect(x: edge, y: 0, width: 0, height: 0)),
       Step(moveTo: c.pocket.midX, speed: 30, run: true, clipRect: c.pocket),
     ])
-    if codex.base == .idle && !codex.busy {
+    if (codex.playing || codex.base == .idle) && !codex.busy {
       after(1.2) { self.codex.enqueue([Step(clip: self.bank.codexLook(degrees: 90), hold: 3.5), Step(clip: self.bank.xReview)]) }
     }
+  }
+
+  /// Clawd's ride across the bar: his racing kart (a dust puff as he gets in and out), or his little cloud.
+  private func clawdTrip(to target: CGFloat, car: Bool) -> [Step] {
+    let c = clawd
+    return car
+      ? [Step(clip: bank.cRaceIn, face: target, onEnd: { self.puff(at: CGPoint(x: c.x, y: 6), color: Palette.white) }),
+         Step(clip: bank.cRaceDrive, loop: true, moveTo: target, speed: 250),
+         Step(clip: bank.cRaceOut, onStart: { self.puff(at: CGPoint(x: c.x, y: 6), color: Palette.white) })]
+      : [Step(clip: bank.cCloudMount, face: target),
+         Step(clip: bank.cCloudRide, loop: true, moveTo: target, speed: 170),
+         Step(clip: bank.cCloudDismount)]
   }
 
   /// Clawd crosses the bar to visit — in his racing kart or on his cloud.
   private func clawdVisits(car: Bool = .random()) {
     let c = clawd, x = codex
     let spot = x.x + 34
-    func trip(to target: CGFloat) -> [Step] {
-      car ? [Step(clip: bank.cRaceIn, face: target, onEnd: { self.puff(at: CGPoint(x: c.x, y: 6), color: Palette.white) }),
-             Step(clip: bank.cRaceDrive, loop: true, moveTo: target, speed: 250),
-             Step(clip: bank.cRaceOut, onStart: { self.puff(at: CGPoint(x: c.x, y: 6), color: Palette.white) })]
-          : [Step(clip: bank.cCloudMount, face: target),
-             Step(clip: bank.cCloudRide, loop: true, moveTo: target, speed: 170),
-             Step(clip: bank.cCloudDismount)]
-    }
     let meet = Step(clip: bank.cHappy, hold: 0.9, face: x.x, hopV: 60, onStart: {
       self.highFive(between: c, x)
-      x.enqueue([Step(clip: self.bank.xReview), Step(clip: self.bank.xWave)])
+      if x.playing { x.enqueue([Step(clip: self.bank.xReview), Step(clip: self.bank.xWave)]) }
     })
-    c.enqueue(trip(to: spot) + [meet, waveStep(c, toward: x.x)] + trip(to: c.pocket.midX) + [Step(clip: bank.cHappy, hold: 0.4, onEnd: { self.end() })])
+    c.enqueue(clawdTrip(to: spot, car: car) + [meet, waveStep(c, toward: x.x)] + clawdTrip(to: c.home, car: car)
+              + [Step(clip: bank.cHappy, hold: 0.4, onEnd: { self.end() })])
+  }
+
+  // MARK: Codex's visits
+
+  /// One of Codex's visits, at random.
+  private func codexVisit() {
+    [codexVisits, codexSprints, codexSneaks, codexLap, codexTrips].randomElement()!()
+  }
+
+  /// The other buddy's reaction to a beat of a visit, so the two stay in sync (unless it got called away to work).
+  private func cue(_ b: Buddy, _ steps: [Step]) -> () -> Void {
+    { if b.playing { b.interrupt(); b.enqueue(steps) } }
   }
 
   /// Codex runs over on foot to visit: a dusty take-off, a jumping high-five, a wave goodbye, and home again.
@@ -732,49 +974,354 @@ final class Scene {
     let side: CGFloat = x.x < c.x ? -1 : 1        // which side of Clawd he stops on
     let spot = c.x + side * 23                     // close enough to slap hands, without the two overlapping
     let look = side < 0 ? bank.cLookL : bank.cLookR
-    // Clawd's reactions are cued by Codex's beats so they stay in sync (unless Clawd got called away to work).
-    func cue(_ steps: [Step]) -> () -> Void {
-      { if c.base == .idle { c.interrupt(); c.enqueue(steps) } }
-    }
     let meet = [
       // Both arms up and a hop; the hands meet at the top of it.
       Step(clip: bank.xReview.still(2), hold: 0.35, hopV: 45, onStart: { self.after(0.1) { self.highFive(between: x, c) } }),
-      Step(clip: bank.xReview.slice(3...5), onStart: cue([happyHop(c)])),
-      Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2, onStart: cue([waveStep(c, toward: spot)])),
+      Step(clip: bank.xReview.slice(3...5), onStart: cue(c, [happyHop(c)])),
+      Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2, onStart: cue(c, [waveStep(c, toward: spot)])),
     ]
     x.enqueue(dash(x, from: x.x, to: spot,
-                   onBrake: cue([Step(clip: look, hold: 3)]),                        // Clawd spots him coming
-                   onStop: cue([armsUp(c, toward: x, hold: 3)]))                     // and raises a claw
+                   onBrake: cue(c, [Step(clip: look, hold: 3)]),                        // Clawd spots him coming
+                   onStop: cue(c, [armsUp(c, toward: x, hold: 3)]))                     // and raises a claw
               + meet
-              + dash(x, from: spot, to: x.pocket.midX,
-                     onGo: { if c.base == .idle { c.enqueue([Step(clip: look, hold: 1.5)]) } },   // watches him go
+              + dash(x, from: spot, to: x.home,
+                     onGo: { if c.playing { c.enqueue([Step(clip: look, hold: 1.5)]) } },   // watches him go
                      onStop: { self.end() }))
   }
 
-  /// Codex's run from one spot to another: a dust puff as he takes off, legs striding in time with his speed,
-  /// then slowing steps into a stop exactly on `to`.
-  private func dash(_ b: Buddy, from: CGFloat, to: CGFloat, onGo: (() -> Void)? = nil,
-                    onBrake: (() -> Void)? = nil, onStop: (() -> Void)? = nil) -> [Step] {
+  /// Codex races over flat out, dust flying, and celebrates like he won; Clawd cheers him on.
+  private func codexSprints() {
+    let c = clawd, x = codex
+    let side: CGFloat = x.x < c.x ? -1 : 1
+    let spot = c.x + side * 23
+    let look = side < 0 ? bank.cLookL : bank.cLookR
+    let hooray = [Step(clip: bank.cSquat, hold: 0.08), happyHop(c), Step(clip: bank.cSquat, hold: 0.08), happyHop(c), waveStep(c, toward: spot)]
+    x.enqueue(dash(x, from: x.x, to: spot, fast: 215,
+                   onBrake: cue(c, [Step(clip: look, hold: 3)]),
+                   onStop: cue(c, hooray))
+              + [Step(clip: bank.xReview.still(2), hold: 0.45, hopV: 60, onStart: {       // arms up: winner!
+                   self.confetti(at: CGPoint(x: x.x, y: 18))
+                   self.after(0.12) { self.highFive(between: x, c) }
+                 }),
+                 Step(clip: bank.xReview),
+                 Step(clip: bank.xJump, onStart: { self.confetti(at: CGPoint(x: x.x, y: 18)) }),
+                 Step(clip: bank.xWave)]
+              + dash(x, from: spot, to: x.home,
+                     onGo: { if c.playing { c.enqueue([Step(clip: look, hold: 1.5)]) } },
+                     onStop: { self.end() }))
+  }
+
+  /// Codex sneaks up on Clawd, who is looking the other way: the last stretch on tiptoe, then BOO. Clawd jumps out
+  /// of his shell; then they both laugh.
+  private func codexSneaks() {
+    let c = clawd, x = codex
+    let side: CGFloat = x.x < c.x ? -1 : 1
+    let spot = c.x + side * 21, creep = c.x + side * 66
+    let away = side < 0 ? bank.cLookR : bank.cLookL, toward = side < 0 ? bank.cLookL : bank.cLookR
+    let boo = {
+      guard c.playing else { return }
+      c.interrupt()
+      c.shakeUntil = self.now + 0.5
+      for i in 0..<3 {
+        self.after(Double(i) * 0.08) {
+          self.emit(.bitmap(Sprite.bang, Palette.gold), at: CGPoint(x: c.x + CGFloat(i - 1) * 5, y: 22), vx: CGFloat(i - 1) * 10, vy: 12, life: 0.6)
+        }
+      }
+      c.enqueue([Step(clip: toward, hold: 0.8, hopV: 95),                                        // eek!
+                 self.happyHop(c), self.happyHop(c),   // …ha
+                 self.waveStep(c, toward: x.x)])
+    }
+    c.enqueue([Step(clip: away, hold: 25)])       // gazing the other way, none the wiser
+    x.enqueue(dash(x, from: x.x, to: creep)
+              + [run(-side, to: spot, speed: 15),                                                // tiptoe…
+                 Step(clip: (side < 0 ? bank.xRunR : bank.xRunL).still(7), hold: 0.4),           // …not a sound…
+                 Step(clip: bank.xReview.still(2), hold: 0.5, hopV: 60, onStart: boo),           // BOO!
+                 Step(clip: bank.xReview, onStart: { self.sparkle(at: CGPoint(x: (x.x + c.x) / 2, y: 22)) }),   // got you ^^
+                 Step(clip: bank.xReview.slice(1...5)),
+                 Step(clip: bank.xWave)]
+              + dash(x, from: spot, to: x.home, onStop: { self.end() }))
+  }
+
+  /// Codex runs a lap of the whole bar: past Clawd (who watches him whizz by), round the back of the last button,
+  /// and all the way home, arms up like he won.
+  private func codexLap() {
+    let c = clawd, x = codex
+    let far = c.pocket.maxX + 14
+    let track = CGRect(x: 0, y: 0, width: c.pocket.maxX, height: 30)   // he disappears behind the last button
+    let speed: CGFloat = 175
+    var turned = false
+    x.enqueue([Step(clip: bank.xRunR.still(1), hold: 0.12),
+               run(1, to: far, speed: speed, clipRect: track, onStart: {
+                 self.puff(at: CGPoint(x: x.x - 6, y: self.ground + 3), color: Palette.white)
+                 self.kickUpDust(x, speed: speed)
+               }),
+               Step(clip: bank.xIdle, hold: 0.45, clipRect: track, onStart: { turned = true })]    // round the back
+              + dash(x, from: far, to: x.home, fast: speed, clipRect: track)
+              + [Step(clip: bank.xReview.still(2), hold: 0.5, hopV: 55, onStart: {
+                   self.confetti(at: CGPoint(x: x.x, y: 18))
+                   self.sparkle(at: CGPoint(x: x.x, y: 22))
+                 }),
+                 Step(clip: bank.xReview, onEnd: { self.end() })])
+    c.enqueue([Step(clip: bank.cLookL, hold: 15, until: { x.x > c.x - 3 }),                    // here he comes…
+               Step(clip: bank.cHappy, hold: 0.45, hopV: 55),                                  // whoosh!
+               Step(clip: bank.cLookR, hold: 15, until: { turned && x.x < c.x + 3 }),           // …and back again
+               Step(clip: bank.cHappy, hold: 0.45, hopV: 55),
+               Step(clip: bank.cLookL, hold: 2)])
+  }
+
+  /// Codex runs over a bit too fast, trips right in front of Clawd and sees stars; then he laughs it off.
+  private func codexTrips() {
+    let c = clawd, x = codex
+    let side: CGFloat = x.x < c.x ? -1 : 1
+    let spot = c.x + side * 23, stumble = spot + side * 20
+    let toward = side < 0 ? bank.cLookL : bank.cLookR
+    let bonk = {
+      self.puff(at: CGPoint(x: x.x, y: self.ground + 4), color: Palette.white)
+      self.dizzy(x, seconds: 1.2)
+      self.cue(c, [Step(clip: toward, hold: 0.45, hopV: 70), Step(clip: toward, hold: 1.2)])()   // Clawd: !!
+      if c.playing { self.emit(.bitmap(Sprite.bang, Palette.gold), at: CGPoint(x: c.x + 8, y: 22), vy: 10, life: 0.6) }
+    }
+    x.enqueue([Step(clip: (side < 0 ? bank.xRunR : bank.xRunL).still(1), hold: 0.12),
+               run(-side, to: stumble, speed: 150, onStart: { self.puff(at: CGPoint(x: x.x + side * 6, y: self.ground + 3), color: Palette.white) }),
+               Step(clip: bank.xFailed.still(1), moveTo: spot, speed: 85, hopV: 50),                // whoops…
+               Step(clip: bank.xFailed.pick([1, 2, 3, 5, 6, 7]), onStart: bonk),                                 // …x_x
+               Step(clip: bank.xReview, onStart: cue(c, [happyHop(c), happyHop(c)])),              // haha, I'm fine
+               Step(clip: bank.xReview.still(2), hold: 0.35, hopV: 45, onStart: { self.after(0.1) { self.highFive(between: x, c) } }),
+               Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2, onStart: cue(c, [waveStep(c, toward: spot)]))]
+              + dash(x, from: spot, to: x.home, onStop: { self.end() }))
+  }
+
+  /// A busy buddy gets a visit: the idle one crosses the bar to cheer it on right by its laptop, then heads home.
+  private func cheerInPerson(_ h: Buddy, _ w: Buddy) {
+    let side: CGFloat = h.home < w.home ? -1 : 1
+    let love = {
+      self.emit(.bitmap(Sprite.heart, Palette.heart), at: CGPoint(x: w.x + 6, y: 20), vy: 16)
+      self.sparkle(at: CGPoint(x: (h.x + w.x) / 2, y: 22))
+      w.hopV = 40; w.hop = max(w.hop, 0.01)
+    }
+    if h.who == .codex {
+      let spot = w.home + side * 23
+      h.enqueue(dash(h, from: h.x, to: spot)
+                + [Step(clip: bank.xReview, onStart: love), Step(clip: bank.xJump)]
+                + dash(h, from: spot, to: h.home, onStop: { self.end() }))
+    } else {
+      let car = Bool.random(), spot = w.home + side * 34
+      var wave = waveStep(h, toward: w.x)
+      wave.onStart = love
+      h.enqueue(clawdTrip(to: spot, car: car) + [wave, Step(clip: bank.cHappy, hold: 0.45, hopV: 55)]
+                + clawdTrip(to: h.home, car: car) + [Step(clip: bank.cHappy, hold: 0.3, onEnd: { self.end() })])
+    }
+  }
+
+  // MARK: Errands (both busy)
+
+  /// Both are working: one gets up and crosses the bar to hand the other part of its work in person (Clawd by kart
+  /// or cloud with a ✻ over his head, Codex at a run with an envelope), then goes back to its laptop. The other keeps
+  /// typing, with a little hop: got it. They take turns, and remember who asked (see `finishWork`).
+  private func delegate() {
+    let a = buddy(nextSender), b = other(a)
+    nextSender = b.who
+    delegatedBy[b.who] = a.who
+    let ultra = a.state.ultra
+    let note: Effect = a.who == .clawd
+      ? .glyph("✻", ultra ? Palette.violet : Palette.clawd, 11)
+      : .bitmap(Sprite.envelope, ultra ? Palette.violet : Palette.codexLight)
+    errand(a, to: b, carrying: note) {
+      b.hopV = 42; b.hop = max(b.hop, 0.01)
+      self.sparkle(at: CGPoint(x: b.x, y: 20), color: ultra ? Palette.violetLight : Palette.gold)
+    }
+  }
+
+  /// The work handed over is done: the one who did it brings back the result (a ✓ from Clawd, a little parcel from
+  /// Codex) to the one who asked, with a high-five and confetti.
+  private func deliver(_ a: Buddy, to b: Buddy) {
+    let result: Effect = a.who == .clawd ? .bitmap(Sprite.check, Palette.green) : .bitmap(Sprite.parcel, Palette.gold)
+    errand(a, to: b, carrying: result) {
+      self.highFive(between: a, b)
+      self.confetti(at: CGPoint(x: b.x, y: 16))
+      if b.playing { b.enqueue([self.happyHop(b)]) } else { b.hopV = 45; b.hop = max(b.hop, 0.01) }
+    }
+  }
+
+  /// `a` crosses the bar with something for `b`, holds it up, hands it over and goes home. An idle `b` comes to take
+  /// it; a busy one keeps typing. A working `a` leaves its laptop (and sits back down after: see `end()`).
+  private func errand(_ a: Buddy, to b: Buddy, carrying item: Effect, handOver: @escaping () -> Void) {
+    let receiving = b.base == .idle
+    begin(receiving ? [a, b] : [a])
+    recall(a)
+    if receiving { recall(b) }
+    let side: CGFloat = a.home < b.home ? -1 : 1           // which side of `b` it stops on
+    let spot = b.home + side * (a.who == .clawd ? 34 : 23)
+    let pickUp = { a.carry = item; self.sparkle(at: self.carryPoint(a)) }
+    let give = {
+      let from = self.carryPoint(a)
+      a.carry = nil
+      self.fire(Projectile(effect: item, from: from, to: receiving ? self.hand(b, toward: a) : self.laptop(b),
+                           start: self.now, duration: 0.4, arc: 5, onArrive: handOver))
+      if receiving { b.enqueue([self.armsUp(b, toward: a, hold: 0.45, catching: true)]) }
+    }
+    var steps: [Step] = []
+    if a.who == .clawd {
+      let car = Bool.random()
+      if a.base == .work { steps.append(Step(clip: bank.cWorkOut)) }       // closes his laptop first
+      var there = clawdTrip(to: spot, car: car)
+      there[0].onStart = pickUp
+      steps += there
+      steps += [Step(clip: bank.cWave.still(6), hold: 0.5, face: b.x, onStart: give),   // claw up: here you go
+                Step(clip: bank.cHappy, hold: 0.45, hopV: 50)]
+      steps += clawdTrip(to: a.home, car: car)
+    } else {
+      steps += dash(a, from: a.x, to: spot, onGo: pickUp)
+      steps += [Step(clip: bank.xReview.still(2), hold: 0.5, onStart: give),                // both arms up: here
+                Step(clip: bank.xWave)]
+      steps += dash(a, from: spot, to: a.home)
+    }
+    steps[steps.count - 1].onEnd = { self.end() }
+    a.enqueue(steps)
+  }
+
+  /// Where a buddy holds what it carries, from its feet: over its head. In the kart Clawd's head is a little
+  /// forward; on the cloud he rides too high for that, so he holds it out in front.
+  private func carryTarget(_ b: Buddy) -> CGVector {
+    if b.who == .codex { return CGVector(dx: 0, dy: 25 + b.hop) }
+    let ahead: CGFloat = b.facingLeft ? -1 : 1
+    switch b.step?.clip?.size {
+    case bank.cRaceDrive.size?: return CGVector(dx: ahead * 6, dy: 22)
+    case bank.cCloudRide.size?: return CGVector(dx: ahead * 15, dy: 18)
+    default: return CGVector(dx: 0, dy: 21 + b.hop)
+    }
+  }
+
+  private func carryPoint(_ b: Buddy) -> CGPoint {
+    let o = b.carryOffset ?? carryTarget(b)
+    return CGPoint(x: b.x + o.dx, y: ground + o.dy)
+  }
+
+  /// Moves what a buddy carries toward where it should be held, so it glides when the buddy changes pose.
+  private func easeCarry(_ b: Buddy, _ dt: Double) {
+    guard b.carry != nil else { b.carryOffset = nil; return }
+    let t = carryTarget(b), k = CGFloat(min(1, dt * 10))
+    guard let o = b.carryOffset else { b.carryOffset = t; return }
+    b.carryOffset = CGVector(dx: o.dx + (t.dx - o.dx) * k, dy: o.dy + (t.dy - o.dy) * k)
+  }
+
+  // MARK: Codex's habits
+
+  /// A stretch of Codex's run to `to`, heading `dir` (+1 right, -1 left): the four stride frames of that direction's
+  /// row, one per ~8pt travelled, so his feet keep up with the ground at any speed (the sheet's own timing is for
+  /// running in place). Slow enough, it's a tiptoe.
+  private func run(_ dir: CGFloat, to: CGFloat, speed: CGFloat, clipRect: CGRect? = nil, onStart: (() -> Void)? = nil) -> Step {
+    var legs = (dir > 0 ? bank.xRunR : bank.xRunL).slice(2...5)
+    legs.durations = Array(repeating: Double(8 / speed), count: legs.frames.count)
+    return Step(clip: legs, loop: true, moveTo: to, speed: speed, clipRect: clipRect, onStart: onStart)
+  }
+
+  /// Codex's run from one spot to another: a dust puff as he takes off (a trail of it when he sprints), legs striding
+  /// in time with his speed, then slowing steps into a stop exactly on `to`.
+  private func dash(_ b: Buddy, from: CGFloat, to: CGFloat, fast: CGFloat = 130, clipRect: CGRect? = nil,
+                    onGo: (() -> Void)? = nil, onBrake: (() -> Void)? = nil, onStop: (() -> Void)? = nil) -> [Step] {
     let dir: CGFloat = to >= from ? 1 : -1
     let row = dir > 0 ? bank.xRunR : bank.xRunL
-    let fast: CGFloat = 130, slow: CGFloat = 45
+    let slow: CGFloat = 45
     let brakeAt = abs(to - from) > 30 ? to - dir * 14 : from   // too short a hop to bother slowing down
-    // The four stride frames (leg forward, pass, other leg, pass), one per ~8pt travelled so the feet keep up
-    // with the ground instead of skating. The sheet's own timing is for running in place.
-    func legs(_ speed: CGFloat) -> Clip {
-      var c = row.slice(2...5)
-      c.durations = Array(repeating: Double(8 / speed), count: c.frames.count)
-      return c
+    let dust = { (ahead: CGFloat) in
+      let p = CGPoint(x: b.x + dir * ahead, y: self.ground + 3)
+      if clipRect?.contains(p) ?? true { self.puff(at: p, color: Palette.white) }   // (none over a button he's behind)
     }
-    let feet = { (ahead: CGFloat) in CGPoint(x: b.x + dir * ahead, y: self.ground + 3) }
     return [
-      Step(clip: row.still(1), hold: 0.12, onStart: onGo),                               // lean into the first step
-      Step(clip: legs(fast), loop: true, moveTo: brakeAt, speed: fast,
-           onStart: { self.puff(at: feet(-6), color: Palette.white) }),
-      Step(clip: legs(slow), loop: true, moveTo: to, speed: slow,
-           onStart: { self.puff(at: feet(6), color: Palette.white); onBrake?() }),
-      Step(clip: row.still(7), hold: 0.2, onStart: onStop),                             // planted, facing where he ran
+      Step(clip: row.still(1), hold: 0.12, clipRect: clipRect, onStart: onGo),                            // lean into the first step
+      run(dir, to: brakeAt, speed: fast, clipRect: clipRect, onStart: {
+        dust(-6)
+        if fast > 150 { self.kickUpDust(b, speed: fast) }
+      }),
+      run(dir, to: to, speed: slow, clipRect: clipRect, onStart: { dust(6); onBrake?() }),
+      Step(clip: row.still(7), hold: 0.2, clipRect: clipRect, onStart: onStop),                          // planted, facing where he ran
     ]
+  }
+
+  /// Little dust clouds behind a sprinting buddy, for as long as the sprint lasts (none while behind a button).
+  private func kickUpDust(_ b: Buddy, speed: CGFloat) {
+    guard let s = b.step, s.speed == speed, let target = s.moveTo else { return }
+    let back: CGFloat = target > b.x ? -1 : 1
+    if s.clipRect?.contains(CGPoint(x: b.x, y: 5)) ?? true {
+      emit(.bitmap(Sprite.dust, Palette.white), at: CGPoint(x: b.x + back * 8, y: ground + 2), vx: back * 14, vy: 7, life: 0.35, size: 0.6)
+    }
+    after(0.07) { self.kickUpDust(b, speed: speed) }
+  }
+
+  /// Zoomies: he tears back and forth across his pocket, kicking up dust at every turn, then beams.
+  private func zoomies(_ x: Buddy) -> [Step] {
+    let lo = x.pocket.minX + 12, hi = x.pocket.maxX - 12
+    var steps = [Step(clip: bank.xRunR.still(1), hold: 0.12)]
+    var at = x.x, dir: CGFloat = 1
+    for to in [hi, lo, hi, lo, x.home] {
+      dir = to >= at ? 1 : -1
+      let turn = at
+      steps.append(run(dir, to: to, speed: 115, onStart: { self.puff(at: CGPoint(x: turn, y: self.ground + 3), color: Palette.white) }))
+      at = to
+    }
+    return steps + [Step(clip: (dir > 0 ? bank.xRunR : bank.xRunL).still(7), hold: 0.2),
+                    Step(clip: bank.xReview, onStart: { self.sparkle(at: CGPoint(x: x.x, y: 22)) })]
+  }
+
+  /// Stargazing: he tips his head back, stars twinkle over the bar, a shooting star streaks by and he follows it. Wow.
+  private func stargaze(_ x: Buddy) -> [Step] {
+    let twinkle = {
+      for i in 0..<5 {
+        self.after(Double(i) * 0.3) {
+          self.emit(.bitmap(Sprite.star, Palette.gold), at: CGPoint(x: x.x + .random(in: -26...26), y: .random(in: 24...28)),
+                    vx: 0, vy: 0, life: 0.7, size: Bool.random() ? 1 : 0.67)
+        }
+      }
+    }
+    let shootingStar = {
+      let start = CGPoint(x: x.x + 28, y: 28.5)
+      self.emit(.bitmap(Sprite.star, Palette.white), at: start, vx: -80, vy: -10, life: 0.6)
+      for i in 1...6 {
+        let t = Double(i) * 0.07
+        self.after(t) {
+          self.emit(.bitmap(Sprite.star, Palette.gold), at: CGPoint(x: start.x - 80 * CGFloat(t), y: start.y - 10 * CGFloat(t)),
+                    vx: 0, vy: 0, life: 0.3, size: 0.5)
+        }
+      }
+    }
+    return [Step(clip: bank.codexLook(degrees: 0), hold: 1.4, onStart: twinkle),          // looks up
+            Step(clip: bank.codexLook(degrees: 22.5), hold: 0.45, onStart: shootingStar),  // there!
+            Step(clip: bank.codexLook(degrees: 337.5), hold: 0.9),                        // follows it
+            Step(clip: bank.codexLook(degrees: 0), hold: 0.5),
+            Step(clip: bank.xReview)]                                                      // ^^
+  }
+
+  /// A little dance: a hop, a head bob to each side, arms up, a wave and a jump, with music notes.
+  private func dance(_ x: Buddy) -> [Step] {
+    let notes = {
+      for i in 0..<6 {
+        self.after(Double(i) * 0.45) {
+          self.emit(.bitmap(Sprite.note, Palette.white), at: CGPoint(x: x.x + .random(in: -12...12), y: 20), vx: .random(in: -8...8), vy: 12, life: 1.1)
+        }
+      }
+    }
+    let bob = [292.5, 67.5, 292.5, 67.5].map { Step(clip: bank.codexLook(degrees: CGFloat($0)), hold: 0.26, hopV: 30) }
+    return [Step(clip: bank.xJump, onStart: notes)] + bob
+      + [Step(clip: bank.xReview.slice(1...3)), Step(clip: bank.xWave), Step(clip: bank.xReview.still(2), hold: 0.4, hopV: 45),
+         Step(clip: bank.xJump)]
+  }
+
+  /// He ducks behind the Mission Control button, peeks back out at you (twice), then pops out: ta-da.
+  private func codexPeek(_ x: Buddy) -> [Step] {
+    let p = x.pocket, hide = p.maxX + 12, peek = p.maxX - 1
+    let look = bank.codexLook(degrees: 292.5)   // (straight left is a profile: the face hardly shows)
+    return [Step(clip: bank.xRunR.still(1), hold: 0.12),
+            run(1, to: hide, speed: 50, clipRect: p),
+            Step(clip: bank.xIdle, hold: 0.9, clipRect: p),                     // gone…
+            Step(clip: look, moveTo: peek, speed: 22, clipRect: p),             // …leans out
+            Step(clip: look, hold: 1.1, clipRect: p),
+            Step(clip: look, moveTo: hide, speed: 80, clipRect: p),             // ducks back
+            Step(clip: bank.xIdle, hold: 0.6, clipRect: p),
+            Step(clip: look, moveTo: peek, speed: 45, clipRect: p),             // peeks again
+            Step(clip: look, hold: 0.5, clipRect: p)]
+      + dash(x, from: peek, to: x.home, clipRect: p)
+      + [Step(clip: bank.xJump, onStart: { self.sparkle(at: CGPoint(x: x.x, y: 22)) })]
   }
 
   // MARK: Step builders
@@ -831,6 +1378,13 @@ final class Scene {
     return Projectile(effect: e, from: p0, to: p1, start: now, duration: Double(max(0.6, abs(p1.x - p0.x) / 430)), arc: arc)
   }
 
+  /// Sends something flying. Thrown during a game, it belongs to that game.
+  private func fire(_ p: Projectile) {
+    var p = p
+    p.game = interacting ? game : 0
+    projectiles.append(p)
+  }
+
   /// Throw something from `a` to `b`. The catcher raises its arms just before it lands.
   private func throwThing(_ e: Effect, from a: Buddy, to b: Buddy, arc: CGFloat, slow: Double = 1, wobble: CGFloat = 0,
                           onArrive: @escaping () -> Void) {
@@ -838,8 +1392,8 @@ final class Scene {
     p.duration *= slow
     p.wobble = wobble
     p.onArrive = onArrive
-    projectiles.append(p)
-    if b.base == .idle {
+    fire(p)
+    if b.playing {
       after(max(0, p.duration - 0.5)) { b.enqueue([self.armsUp(b, toward: a, hold: 0.5, catching: true)]) }
     }
   }
@@ -878,6 +1432,17 @@ final class Scene {
     sparkle(at: mid)
   }
 
+  /// Stars circling a dazed buddy's head.
+  private func dizzy(_ b: Buddy, seconds: Double) {
+    for i in 0..<Int(seconds / 0.1) {
+      after(Double(i) * 0.1) {
+        let a = Double(i) * 1.1
+        self.emit(.bitmap(Sprite.star, Palette.gold), at: CGPoint(x: b.x + CGFloat(cos(a)) * 8, y: self.ground + 24 + CGFloat(sin(a)) * 1.5),
+                  vx: 0, vy: 0, life: 0.3, size: 0.67)
+      }
+    }
+  }
+
   // MARK: Drawing
 
   func draw(_ ctx: CGContext) {
@@ -910,7 +1475,7 @@ final class Scene {
       if let edge = s.leftEdge { drawX = edge + clip.anchorX }
       if let r = s.clipRect { ctx.saveGState(); ctx.clip(to: r) }
     } else {
-      switch b.base {
+      switch b.pose {
       case .sleep:
         alpha = 0.8
         if b.who == .clawd {
@@ -934,11 +1499,12 @@ final class Scene {
     drawUltraGlow(b, ctx)
     if b.who == .clawd && b.state.ultra { clip = bank.violet(clip) }
     clip.draw(frame, in: ctx, x: drawX, y: ground + b.hop, mirror: mirror, alpha: alpha, squashY: squash)
+    if let item = b.carry { draw(item, at: carryPoint(b), size: 1, alpha: 1, flip: false, outline: true, ctx) }
     if b.step?.clipRect != nil && (b.step?.run == true || b.step?.clip != nil) { ctx.restoreGState() }
 
     // Claude Code's spinner above Clawd while he works.
     // In ultracode it turns violet and spins much faster.
-    if b.who == .clawd && b.base == .work && !b.busy {
+    if b.who == .clawd && b.pose == .work && !b.busy {
       let frames = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
       let beat = b.state.ultra ? 0.045 : 0.12
       drawGlyph(frames[Int(now / beat) % frames.count], at: CGPoint(x: b.x - 5, y: 22.5),

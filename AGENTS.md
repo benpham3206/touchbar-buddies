@@ -62,30 +62,51 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
 - **Bank** (`Bank.swift`): the named clips, e.g. `cStand cBlink cLookL cLookR cHappy cLoaf cSquat cScuttle
   cWave cLurk cCloudMount cCloudRide cCloudDismount cRaceIn cRaceDrive cRaceOut cWorkIn cWorkLoop cWorkOut`
   for Clawd and `xIdle xRunR xRunL xWave xJump xFailed xWaiting xWork xReview xSleep codexLook(degrees:)`
-  for Codex. The top of `Bank` is the current list.
+  for Codex. The top of `Bank` is the current list. Codex's look frames at exactly 90° / 270° are profiles (his
+  face barely shows); 67.5° / 292.5° read better as "looking right / left".
 - **Buddy** (`Scene.swift`): `x`, `hop`, `facingLeft`, `pocket`, `state` (an `AgentState`), `base`
-  (`.sleep` / `.idle` / `.work`) and a queue of `Step`s. With an empty queue a buddy shows its base pose
-  (asleep, typing on its laptop, or standing).
+  (`.sleep` / `.idle` / `.work`) and a queue of `Step`s. With an empty queue a buddy shows its `pose`: the base
+  pose (asleep, typing on its laptop, or standing), except that a buddy `playing` in a game just stands.
+  `carry` is something it takes across the bar, drawn over its head.
 - **Step:** one beat. `clip` (+ `loop`, `hold` seconds), `moveTo` + `speed` (+ `run: true` for the walk
   cycle), `face`, `hopV` (jump), `until` (a condition), `onStart` / `onEnd`. `clipRect` / `leftEdge` are for
-  peeking out from behind a button. Queue steps with `b.enqueue([...])`. `b.interrupt()` clears the queue.
+  peeking out from behind a button. Queue steps with `b.enqueue([...])`. `b.interrupt()` clears the queue (and
+  anything waiting on it: the tap-to-open entrance, a carried item); `recall(b)` also pops a buddy that was out of
+  its pocket or behind a button back home.
 - **Scene helpers:** `after(seconds) { … }` (timers on the scene clock), `emit(.bitmap(Sprite.heart, Palette.heart), at:)`
   for particles, `throwThing(_:from:to:arc:)` (the catcher raises its arms in time), `sparkle`, `puff`,
-  `confetti`, `highFive`. Step builders: `happyHop`, `hopSteps`, `waveStep`, `throwSteps`, `catchSteps`, `stroll`.
+  `confetti`, `highFive`, `dizzy`. Step builders: `happyHop`, `hopSteps`, `waveStep`, `throwSteps`, `catchSteps`,
+  `stroll`, `clawdTrip` (kart or cloud), and for Codex `run` (one stretch, legs in time with the speed) and `dash`
+  (take-off, run, braking steps, stop exactly on the spot; `fast:` over 150 leaves a dust trail).
 - **Frame rate (battery):** the render loop runs at the speed `Scene.pace` asks for: 60 fps while something flies
   across the bar, 30 for hops/walks/particles/ultra, 12 for plain sprite animation, 10 while both sleep. It also
   redraws only the pockets (`Scene.redrawAreas`) unless something is drawn outside them (`drawsOutsidePockets`).
-  Steps with `moveTo`, hops, particles and projectiles are already covered; if you add a new kind of smooth motion
-  or something drawn outside the pockets, teach `pace` / `drawsOutsidePockets` about it or it will look choppy or leave trails.
+  Steps with `moveTo`, hops, particles, projectiles and buddies `abroad` (out of their pocket, unless the step's
+  `clipRect` keeps them inside it, as when hiding behind a button) are already covered; if you add a new kind of
+  smooth motion or something drawn outside the pockets, teach `pace` / `drawsOutsidePockets` about it or it will
+  look choppy or leave trails. A step that clips to anything wider than the pocket (Codex's lap) counts as abroad.
 - **Ultra / ultracode:** when Codex runs at `ultra` effort or Claude Code gets an `ultracode` prompt, that agent's
   `AgentState.ultra` is true while it works: Clawd turns violet and types fast, Codex's symbols radiate in purple.
   Try it with `./tbb send ultra-claude` / `ultra-codex` (or `--do` them in a render). Holding both buddies for 0.8 s
   is a secret 8-second boost (`Scene.ultraBoost`).
-- **Messages while both work:** when both buddies are busy, the director (`direct()`) has them send each other a ✻ or
-  an envelope every few seconds without stopping (`message` command).
-- **Games:** only one at a time. `begin()` sets `interacting`, and the game **must** call `end()` when it's
-  done (a 30 s safety limit ends a stuck one). `direct()` starts a random game from `startInteraction()` (a weighted list)
-  every 14–30 s when both buddies are idle, or `support()` when one of them is working.
+- **Errands while both work:** every 30–60 s of both working, `direct()` calls `delegate()`: one buddy (they take turns)
+  leaves its laptop and crosses the bar with a ✻ (Clawd, by kart or cloud) or an envelope (Codex, on foot), hands it
+  over and goes back; the other keeps typing. `delegatedBy` remembers it, and when the helper's agent really finishes
+  (`finishWork`), it brings the result back in person (`pendingDelivery` → `deliver()`: a ✓ or a parcel, a high-five,
+  confetti), unless the one who asked has gone to sleep. Commands: `delegate` (both must be working), `deliver`.
+- **Games:** only one at a time. `begin(players)` sets `interacting` and marks the players `playing`, and the game
+  **must** call `end()` when it's done (a 30 s safety limit ends a stuck one); `end()` sends each player back to what its
+  app is doing (to its laptop with `cWorkIn`, back to sleep with a puff). Timers (`after`) and thrown things started
+  during a game belong to it, so `cancelGame()` can call it off cleanly. `direct()` starts a random game from
+  `startInteraction()` (a weighted list) every 14–30 s when both buddies are idle, or `support()` when one of them is
+  working. **Play Together** (menu bar, `play` command) starts one right away whatever the states (`play()`: a
+  sleeping buddy gets up, a working one closes its laptop); the **Play** submenu lists `Scene.games` by name.
+- **Entrances:** when an app opens, `arrive()` plays `clawdEntrance()` (cloud ride, hop, wave to Codex) or
+  `codexEntrance()` (runs off behind the brightness button and back in, jump, wave, confetti); a tap on a closed app
+  (`launch()`) plays the same, holding its middle (Clawd's ride, Codex peeking from the wings) until the app is up.
+  `launchUntil` is time-limited and cleared by any interrupt, and every tap on a closed app asks `onLaunch` again.
+  `welcomeBack()` (after an unlock; `welcome` command) has the awake buddies peek in from behind their buttons and
+  walk / run in; it runs on the next frame, once the scene clock is current.
 - **Commands:** `Scene.command(name)` is a switch of named triggers (`go { … }` interrupts both buddies
   and calls `begin()` for you). App-level ones (`work-claude`, `absent-codex`, `slider-volume`…) are in
   `AppDelegate.handle`. `./tbb commands` lists both, read straight from the code. Unknown names are ignored.
@@ -102,6 +123,9 @@ Every new animation gets a **command name**, so you can trigger it on demand in 
    steps (`a.enqueue([...])`), timers (`after(0.8) { … }`) and effects, and call `self.end()` once it's over.
 2. Give it a command in `command(_:)`: `case "my-thing": go { myThing() }`.
 3. To let it happen on its own, add it to the `options` in `startInteraction()` with a weight (the others use 8–22).
+   To offer it in the menu bar's Play submenu (and Play Together), add a `(title, command)` to `Scene.games`.
+   A game must look right from any state (Play Together starts games while buddies work or sleep): react with
+   `if b.playing { … }` rather than checking `b.base`.
 4. Check it: `./tbb render /tmp/my-thing.png --do my-thing --seconds 8`, then look at the PNG.
 
 ### Add an idle habit (one buddy, when nothing else is going on)
@@ -109,7 +133,8 @@ Every new animation gets a **command name**, so you can trigger it on demand in 
 1. In `idleHabits(_:)`, add a band to that buddy's `switch r` (for example `case ..<0.90:`). The bands
    are cumulative probabilities: keep them in increasing order.
 2. Put the steps in a small builder, e.g. `private func yawn(_ b: Buddy) -> [Step]`, and add a command:
-   `case "yawn": clawd.interrupt(); clawd.enqueue(yawn(clawd))`.
+   `case "yawn": habit(clawd) { yawn(clawd) }`. Codex's `zoomies`, `stargaze`, `dance` and `codexPeek`
+   (`peek-codex`) are examples; a habit must end exactly at `home`.
 3. Check it with `./tbb render /tmp/yawn.png --do yawn`. `--live` also runs the random habits, if you want
    to see it come up by itself.
 
@@ -117,7 +142,9 @@ Every new animation gets a **command name**, so you can trigger it on demand in 
 
 `setState` calls `arrive`, `fallAsleep`, `startWork` and `finishWork`. Add your steps there. In a render,
 `--do work-claude` switches Claude to busy, a second `--do work-claude --at 4` switches it back (that
-plays `finishWork`), and `--claude asleep` + `--do tap-clawd` plays the wake-up.
+plays `finishWork`), `--claude asleep` + `--do tap-clawd` plays the tap-to-open entrance and `--do absent-claude`
+the one for an app opened elsewhere. `--claude working --codex working --do delegate --do work-claude --at 15`
+shows a whole errand: Codex hands Clawd work, and Clawd brings the result back when he finishes.
 
 ### Add a clip from the sprite sheets
 
@@ -161,7 +188,7 @@ Add rows to `Sprite` in `PixelArt.swift` (`#` = filled) and a color to `Palette`
    with its time, so open it and look. Useful options: `--zoom` (the two pockets, magnified), `--every 0.2`
    for fast motion, `--scale 1` for long timelines, `--claude working|asleep`, `--codex …`, and several
    `--do x --at t`. Use a `.gif` for a real animation. It prints a note if the buddies were still busy
-   at the end. Roughly: `toss` takes 8 s, `visit-clawd-car` 11 s.
+   at the end. Roughly: `toss` takes 8 s, `visit-clawd-car` 11 s, the Codex visits 12–17 s, `delegate` 14 s.
 2. **Build what users build:** `./build.sh` (universal, macOS 12 target) must succeed. Guard newer APIs
    with `if #available(macOS 13, *)`.
 3. **On the real Touch Bar:** `./tbb run` (builds, restarts the app from `build/`), `./tbb send <command>`,

@@ -162,6 +162,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     menu.addItem(header("Codex: \(describe(monitor.codex))"))
     menu.addItem(.separator())
     menu.addItem(item("Play Together", #selector(playTogether)))
+    let games = NSMenu()
+    for (i, game) in Scene.games.enumerated() {
+      let g = item(game.title, #selector(playGame(_:)))
+      g.tag = i
+      games.addItem(g)
+    }
+    let play = NSMenuItem(title: "Play", action: nil, keyEquivalent: "")
+    play.submenu = games
+    menu.addItem(play)
     menu.addItem(item("Visits Across the Bar", #selector(toggleRoaming), on: scene.roaming))
     menu.addItem(item("Pretend Claude Is Working", #selector(toggleClaudeWork), on: monitor.pretendWorking[.claude] == true))
     menu.addItem(item("Pretend Codex Is Working", #selector(toggleCodexWork), on: monitor.pretendWorking[.codex] == true))
@@ -192,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   }
 
   @objc private func playTogether() { scene.playTogether() }
+  @objc private func playGame(_ sender: NSMenuItem) { scene.playTogether(Scene.games[sender.tag].command) }
   @objc private func toggleRoaming() { scene.roaming.toggle() }
   @objc private func toggleClaudeWork() { monitor.pretendWorking[.claude] = !(monitor.pretendWorking[.claude] ?? false) }
   @objc private func toggleCodexWork() { monitor.pretendWorking[.codex] = !(monitor.pretendWorking[.codex] ?? false) }
