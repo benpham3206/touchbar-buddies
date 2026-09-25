@@ -50,10 +50,26 @@ final class ActivityMonitor {
   private let busyThreshold = 0.025
   private let holdSeconds: Double = 8
 
+  // Main-thread copies of what the sampler found, handed over after each sample (the main thread never waits on
+  // the sampler: that used to stall the Touch Bar's animation for a frame or two).
+  private var latest: (cli: [AgentKind: Bool], busy: [AgentKind: Bool], ultra: [AgentKind: Bool]) = ([:], [:], [:])
+  /// Bundle ids of Claude / Codex apps that are running, kept up to date from launch/quit notifications.
+  private var runningApps = Set<String>()
+
   func start() {
+    for id in [Self.claudeBundle, Self.codexBundle] where !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty {
+      runningApps.insert(id)
+    }
+    // Only Claude's and Codex's launches matter. Other apps (browsers start and stop helpers as you switch tabs)
+    // are ignored right away.
     let ws = NSWorkspace.shared.notificationCenter
     for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-      ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.publish() }
+      ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] n in
+        guard let self, let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let id = app.bundleIdentifier, id == Self.claudeBundle || id == Self.codexBundle else { return }
+        if name == NSWorkspace.didLaunchApplicationNotification { self.runningApps.insert(id) } else { self.runningApps.remove(id) }
+        self.publish()
+      }
     }
     let t = DispatchSource.makeTimerSource(queue: queue)
     t.schedule(deadline: .now(), repeating: 2.0, leeway: .milliseconds(500))   // every 2 s: plenty, and easy on the battery
@@ -132,18 +148,26 @@ final class ActivityMonitor {
         if debug { FileHandle.standardError.write("[logs] \(detector.report) active=\(detector.active)\n".data(using: .utf8)!) }
       }
     }
-    DispatchQueue.main.async { self.publish() }
+    var snapshot: (cli: [AgentKind: Bool], busy: [AgentKind: Bool], ultra: [AgentKind: Bool]) = ([:], [:], [:])
+    for kind in [AgentKind.claude, .codex] {
+      snapshot.cli[kind] = cliAlive[kind] ?? false
+      snapshot.busy[kind] = busy[kind] == true || turnOpen[kind] == true
+      snapshot.ultra[kind] = ultra[kind] ?? false
+    }
+    DispatchQueue.main.async {
+      self.latest = snapshot
+      self.publish()
+    }
   }
 
   // MARK: Publishing (main thread)
 
   private func publish() {
-    let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
     func state(_ kind: AgentKind, bundle: String) -> AgentState {
-      let app = running.contains(bundle)
-      let cli = queue.sync { cliAlive[kind] ?? false }
-      let isBusy = queue.sync { busy[kind] == true || turnOpen[kind] == true }
-      let isUltra = queue.sync { ultra[kind] ?? false }
+      let app = runningApps.contains(bundle)
+      let cli = latest.cli[kind] ?? false
+      let isBusy = latest.busy[kind] ?? false
+      let isUltra = latest.ultra[kind] ?? false
       if pretendAbsent[kind] == true { return AgentState() }
       let fakeUltra = pretendUltra[kind] == true
       let pretending = pretendWorking[kind] == true || fakeUltra

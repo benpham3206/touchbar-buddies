@@ -51,6 +51,7 @@ final class StripView: NSView {
   private var lastTick: Double = 0
   private var lastFrameFull = true
   private var nextVolumeCheck: Double = 0
+  private let volumeQueue = DispatchQueue(label: "dev.touchbarbuddies.volume", qos: .utility)
   private var laidOutWidth: CGFloat = -1
   private var popover: SliderPopover?     // brightness / volume slider, when open
 
@@ -177,7 +178,7 @@ final class StripView: NSView {
     guard newFPS != fps else { return }
     timer?.invalidate()
     let t = Timer(timeInterval: 1 / newFPS, repeats: true) { [weak self] _ in self?.tick() }
-    t.tolerance = 0.2 / newFPS   // lets macOS batch our wake-ups with others
+    t.tolerance = 0.05 / newFPS   // a little slack lets macOS batch wake-ups; more makes frames land unevenly
     RunLoop.main.add(t, forMode: .common)
     timer = t
     fps = newFPS
@@ -187,6 +188,10 @@ final class StripView: NSView {
   /// One animation frame: advance the scene, handle held fingers, and redraw if anything changed.
   private func tick() {
     let now = CACurrentMediaTime()
+    // A frame arriving far too late means something blocked the main thread: log it (`./tbb logs`) to find out what.
+    if fps > 0 && now - lastTick > max(0.15, 3 / fps) {
+      NSLog("[hitch] frame %.0f ms late at %.0f fps", (now - lastTick - 1 / fps) * 1000, fps)
+    }
     let dt = min(0.05, now - lastTick)
     lastTick = now
     scene.update(now, dt)
@@ -221,8 +226,15 @@ final class StripView: NSView {
     }
     if now > nextVolumeCheck {
       nextVolumeCheck = now + 0.5
-      let icon = Self.icon(forVolume: SystemControls.volume, muted: SystemControls.muted)
-      if icon != volumeIcon { volumeIcon = icon; needsDisplay = true }
+      // CoreAudio can be slow to answer (e.g. while audio devices change), so ask off the main thread.
+      volumeQueue.async { [weak self] in
+        let icon = Self.icon(forVolume: SystemControls.volume, muted: SystemControls.muted)
+        DispatchQueue.main.async {
+          guard let self, icon != self.volumeIcon else { return }
+          self.volumeIcon = icon
+          self.needsDisplay = true
+        }
+      }
     }
 
     // Pick the frame rate and redraw area for the next frame (see the note above start()).
