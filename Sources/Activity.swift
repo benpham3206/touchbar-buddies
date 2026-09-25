@@ -145,9 +145,11 @@ final class ActivityMonitor {
       let isBusy = queue.sync { busy[kind] == true || turnOpen[kind] == true }
       let isUltra = queue.sync { ultra[kind] ?? false }
       if pretendAbsent[kind] == true { return AgentState() }
-      let present = app || cli
       let fakeUltra = pretendUltra[kind] == true
-      let working = present && (isBusy || pretendWorking[kind] == true || fakeUltra)
+      let pretending = pretendWorking[kind] == true || fakeUltra
+      // Pretending also wakes the buddy, so the menu switches work even while the app is closed.
+      let present = app || cli || pretending
+      let working = pretending || (present && isBusy)
       return AgentState(appRunning: app, present: present, working: working, ultra: working && (isUltra || fakeUltra))
     }
     let c = state(.claude, bundle: Self.claudeBundle)
