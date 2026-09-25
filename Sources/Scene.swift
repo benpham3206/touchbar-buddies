@@ -921,9 +921,9 @@ final class Scene {
         }
       case .work:
         // Codex's working row changes his face every frame, so it runs at half speed normally (calm typing);
-        // ultra is the frenzy (5× that for Codex, 3× for Clawd).
+        // ultra speeds it up (2× that for Codex, 3× for Clawd).
         clip = b.who == .clawd ? bank.cWorkLoop : bank.xWork.speed(0.5)
-        if b.state.ultra { clip = clip.speed(b.who == .clawd ? 3 : 5) }   // typing like mad
+        if b.state.ultra { clip = clip.speed(b.who == .clawd ? 3 : 2) }   // typing like mad
         frame = clip.index(at: now, loop: true)
       case .idle:
         if let s = b.still, now < b.stillUntil { clip = s }
