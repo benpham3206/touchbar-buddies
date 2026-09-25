@@ -31,6 +31,7 @@ final class Buddy {
   var stepStart: Double = 0
   var state = AgentState()             // what the buddy acts out
   var reported = AgentState()          // what the activity monitor says (state = this + the secret ultra boost)
+  var greeted = false                 // has made its first entrance since the app started
   var launchUntil: Double = 0          // a tap is opening its app: the entrance plays until then (see Scene.launch)
   var playing = false                  // in a game, whatever its app is doing; Scene.end() sends it back to that
   var carry: Effect? = nil             // something it takes across the bar (a message, a result), held over its head
@@ -270,7 +271,17 @@ final class Scene {
     b.interrupt()
     b.playing = false
     b.x = b.home
-    b.enqueue(b.who == .clawd ? clawdEntrance() : codexEntrance())
+    if !b.greeted {
+      // First arrival after login: pop out from behind the outer buttons — Codex from the left, Clawd from the right.
+      b.greeted = true
+      let side: CGFloat = b.who == .codex ? -1 : 1
+      b.x = (side < 0 ? b.pocket.minX : b.pocket.maxX) + side * 14
+      let popIn = Step(moveTo: b.home, speed: 45, run: true, clipRect: b.pocket)
+      b.enqueue([popIn, b.who == .clawd ? Step(clip: bank.cHappy, hold: 0.45, hopV: 60) : Step(clip: bank.xJump),
+                 waveStep(b, toward: b.who == .clawd ? codex.x : clawd.x)])
+    } else {
+      b.enqueue(b.who == .clawd ? clawdEntrance() : codexEntrance())
+    }
     if b.state.working { startWork(b) }
   }
 
