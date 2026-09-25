@@ -435,6 +435,22 @@ final class Scene {
   /// The Mac was just unlocked: the awake buddies make an entrance. Both peek in from behind the buttons next to
   /// their pockets; then Clawd walks in, Codex comes running, and both wave. It plays on the next frame, once the
   /// scene clock has caught up with the time spent locked.
+  /// A clean slate (after reloading sprites): both buddies home with nothing queued; setState replays their apps.
+  func resetBuddies() {
+    projectiles.removeAll()
+    particles.removeAll()
+    timers.removeAll()
+    interacting = false
+    for b in [clawd, codex] {
+      b.interrupt()
+      b.state = AgentState()
+      b.hop = 0
+      b.hopV = 0
+      b.x = b.home
+      b.drawnRect = .zero
+    }
+  }
+
   func welcomeBack() { welcomeDue = true }
 
   private func welcome() {

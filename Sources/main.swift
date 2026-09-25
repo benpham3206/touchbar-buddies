@@ -141,6 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     case "work-codex": toggleCodexWork()
     case "ultra-claude": toggleClaudeUltra()
     case "ultra-codex": toggleCodexUltra()
+    case "refresh": refreshTouchBar()
+    case "rebuild-sprites": rebuildSprites()
     case "slider-volume", "slider-brightness": strip.openPopover(volume: command == "slider-volume")
     default: scene.command(command)
     }
@@ -194,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
       menu.addItem(item("Allow Window Tiling & Media Keys…", #selector(enableMediaKeys)))
     }
     menu.addItem(item("Open at Login", #selector(toggleLogin), on: FileManager.default.fileExists(atPath: Self.agentURL.path)))
-    menu.addItem(item("Refresh Touch Bar", #selector(presentBar)))
+    menu.addItem(item("Refresh Touch Bar", #selector(refreshTouchBar)))
     menu.addItem(item("Rebuild Sprites", #selector(rebuildSprites)))
     menu.addItem(.separator())
     menu.addItem(item("Quit Touch Bar Buddies", #selector(quit)))
@@ -250,6 +252,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   private var rebuilding = false
 
   /// Re-extracts every sprite in the background, then swaps the new art in.
+  /// Everything short of relaunching: show the bar again, restart the animation, reload the sprites from the cache.
+  @objc private func refreshTouchBar() {
+    strip.stop()
+    strip.start()
+    presentBarSoon()
+    reload(Bank(resources: AssetCache.directory))
+  }
+
+  /// Swap in freshly loaded sprites and replay what each app is doing, so the buddies reappear right away.
+  private func reload(_ bank: Bank) {
+    scene.bank = bank
+    scene.resetBuddies()
+    scene.setState(scene.clawd, monitor.claude)
+    scene.setState(scene.codex, monitor.codex)
+    strip.needsDisplay = true
+  }
+
   @objc private func rebuildSprites() {
     guard !rebuilding else { return }
     rebuilding = true
@@ -258,10 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
       let bank = Bank(resources: AssetCache.directory)
       DispatchQueue.main.async {
         self.rebuilding = false
-        self.scene.bank = bank
-        // A buddy that just got his sprites picks up what his app is doing right now.
-        self.scene.setState(self.scene.clawd, self.monitor.claude)
-        self.scene.setState(self.scene.codex, self.monitor.codex)
+        self.reload(bank)
       }
     }
   }
