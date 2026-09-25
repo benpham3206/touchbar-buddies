@@ -1,8 +1,9 @@
 import AppKit
 import QuartzCore
 
-// A faithful copy of the Expanded Control Strip (read from the user's own Control Strip layout),
-// with the first gap given to Codex and the last gap to Clawd.
+// The whole Touch Bar: a faithful copy of the Expanded Control Strip (laid out like the user's own),
+// with the first gap given to Codex and the last gap to Clawd. It draws the buttons, lets Scene draw the
+// buddies on top, and turns touches into button presses or buddy taps.
 final class StripView: NSView {
   enum Action { case brightness, missionControl, launchpad, keyboardDown, keyboardUp, rewind, playPause, forward, mute, volume, sleep, lock }
 
@@ -14,19 +15,21 @@ final class StripView: NSView {
 
   enum Target { case button(Int), buddy(Who), popover, none }
 
+  /// One finger on the bar.
   struct TouchState {
     var target: Target
     var start: CGPoint
     var began: Double
     var moved = false
-    var longFired = false
-    var lastRepeat: Double = 0
-    var startValue: Float = 0
+    var longFired = false          // a long press already happened, so lifting isn't a tap
+    var lastRepeat: Double = 0     // keyboard-backlight auto-repeat
+    var startValue: Float = 0      // brightness/volume when the finger went down (press-and-slide)
   }
 
   // Colors measured from screenshots of the native strip.
   static let buttonColor = CGColor(srgbRed: 55 / 255, green: 54 / 255, blue: 55 / 255, alpha: 1)
   static let pressedColor = CGColor(srgbRed: 96 / 255, green: 95 / 255, blue: 98 / 255, alpha: 1)
+  /// macOS's stock Expanded Control Strip, used when the user never customized theirs.
   static let defaultLayout = [
     "com.apple.system.brightness", "NSTouchBarItemIdentifierFlexibleSpace", "com.apple.system.mission-control",
     "com.apple.system.launchpad", "NSTouchBarItemIdentifierFlexibleSpace", "com.apple.system.group.keyboard-brightness",
@@ -35,6 +38,10 @@ final class StripView: NSView {
   ]
 
   let scene: Scene
+  /// Control Strip item ids to lay out instead of the user's own (the offline renderer uses the stock layout).
+  var fixedLayout: [String]?
+  /// The volume button's glyph shows the current level; refreshed twice a second.
+  var volumeIcon: Icon = .volume
 
   private var buttons: [Button] = []
   private var pressed: Int?
@@ -44,7 +51,6 @@ final class StripView: NSView {
   private var frameCount = 0
   private var laidOutWidth: CGFloat = -1
   private var popover: SliderPopover?     // brightness / volume slider, when open
-  private var volumeIcon: Icon = .volume
 
   init(scene: Scene) {
     self.scene = scene
@@ -64,38 +70,43 @@ final class StripView: NSView {
     if bounds.width != laidOutWidth { relayout() }
   }
 
+  /// Lays the buttons out left to right, then gives the leftover width to the two buddy pockets.
   func relayout() {
     laidOutWidth = bounds.width
-    let ids = (CFPreferencesCopyAppValue("FullCustomized" as CFString, "com.apple.controlstrip" as CFString) as? [String]) ?? Self.defaultLayout
+    let ids = fixedLayout
+      ?? (CFPreferencesCopyAppValue("FullCustomized" as CFString, "com.apple.controlstrip" as CFString) as? [String])
+      ?? Self.defaultLayout
 
-    enum Seg { case items([(Action, Icon, CGFloat)], CGFloat), flex }
-    let segs: [Seg] = ids.compactMap { id in
+    // Each Control Strip item is a group of buttons (action, icon, width in points, and the gap between
+    // them) or a flexible space. Anything we don't draw (Siri, screenshot…) is skipped.
+    enum Segment { case group([(Action, Icon, CGFloat)], gap: CGFloat), flex }
+    let segments: [Segment] = ids.compactMap { id in
       switch id {
-      case "com.apple.system.brightness": return .items([(.brightness, .brightness, 72)], 0)
-      case "com.apple.system.mission-control": return .items([(.missionControl, .missionControl, 72)], 0)
-      case "com.apple.system.launchpad": return .items([(.launchpad, .launchpad, 72)], 0)
-      case "com.apple.system.group.keyboard-brightness": return .items([(.keyboardDown, .keyboardDown, 75), (.keyboardUp, .keyboardUp, 75)], 1.5)
-      case "com.apple.system.group.media": return .items([(.rewind, .rewind, 73), (.playPause, .playPause, 73), (.forward, .forward, 73)], 2)
-      case "com.apple.system.mute": return .items([(.mute, .mute, 72)], 0)
-      case "com.apple.system.volume": return .items([(.volume, .volume, 72)], 0)
-      case "com.apple.system.sleep": return .items([(.sleep, .sleep, 72)], 0)
-      case "com.apple.system.screen-lock": return .items([(.lock, .lock, 72)], 0)
+      case "com.apple.system.brightness": return .group([(.brightness, .brightness, 72)], gap: 0)
+      case "com.apple.system.mission-control": return .group([(.missionControl, .missionControl, 72)], gap: 0)
+      case "com.apple.system.launchpad": return .group([(.launchpad, .launchpad, 72)], gap: 0)
+      case "com.apple.system.group.keyboard-brightness": return .group([(.keyboardDown, .keyboardDown, 75), (.keyboardUp, .keyboardUp, 75)], gap: 1.5)
+      case "com.apple.system.group.media": return .group([(.rewind, .rewind, 73), (.playPause, .playPause, 73), (.forward, .forward, 73)], gap: 2)
+      case "com.apple.system.mute": return .group([(.mute, .mute, 72)], gap: 0)
+      case "com.apple.system.volume": return .group([(.volume, .volume, 72)], gap: 0)
+      case "com.apple.system.sleep": return .group([(.sleep, .sleep, 72)], gap: 0)
+      case "com.apple.system.screen-lock": return .group([(.lock, .lock, 72)], gap: 0)
       case "NSTouchBarItemIdentifierFlexibleSpace": return .flex
       default: return nil
       }
     }
-    // Fixed width: buttons, gaps inside groups, and the 16pt spacing between neighbouring items.
+    // Fixed width: buttons, gaps inside groups, and the 16pt spacing between neighbouring groups.
     var fixed: CGFloat = 0
     var flexCount = 0
-    var prevWasItem = false
-    for s in segs {
+    var prevWasGroup = false
+    for s in segments {
       switch s {
-      case let .items(list, gap):
-        fixed += list.map(\.2).reduce(0, +) + gap * CGFloat(list.count - 1) + (prevWasItem ? 16 : 0)
-        prevWasItem = true
+      case let .group(list, gap):
+        fixed += list.map(\.2).reduce(0, +) + gap * CGFloat(list.count - 1) + (prevWasGroup ? 16 : 0)
+        prevWasGroup = true
       case .flex:
         flexCount += 1
-        prevWasItem = false
+        prevWasGroup = false
       }
     }
     let spare = max(0, bounds.width - fixed)
@@ -107,17 +118,17 @@ final class StripView: NSView {
     var flexIndex = 0
     var codexPocket = CGRect.zero, clawdPocket = CGRect.zero
     buttons = []
-    prevWasItem = false
-    for s in segs {
+    prevWasGroup = false
+    for s in segments {
       switch s {
-      case let .items(list, gap):
-        if prevWasItem { x += 16 }
-        for (i, item) in list.enumerated() {
+      case let .group(list, gap):
+        if prevWasGroup { x += 16 }
+        for (i, (action, icon, width)) in list.enumerated() {
           if i > 0 { x += gap }
-          buttons.append(Button(action: item.0, icon: item.1, rect: CGRect(x: x, y: 0, width: item.2, height: 30)))
-          x += item.2
+          buttons.append(Button(action: action, icon: icon, rect: CGRect(x: x, y: 0, width: width, height: 30)))
+          x += width
         }
-        prevWasItem = true
+        prevWasGroup = true
       case .flex:
         let isFirst = flexIndex == 0, isLast = flexIndex == flexCount - 1
         let w = flexCount == 1 ? pocket * 2 : (isFirst || isLast) ? pocket : sliver
@@ -131,7 +142,7 @@ final class StripView: NSView {
         }
         x += w
         flexIndex += 1
-        prevWasItem = false
+        prevWasGroup = false
       }
     }
     scene.layout(codexPocket: codexPocket, clawdPocket: clawdPocket)
@@ -140,6 +151,7 @@ final class StripView: NSView {
 
   // MARK: Render loop
 
+  /// Starts the 60 Hz animation timer (stopped while the screen sleeps).
   func start() {
     guard timer == nil else { return }
     lastTick = CACurrentMediaTime()
@@ -153,6 +165,7 @@ final class StripView: NSView {
     timer = nil
   }
 
+  /// One animation frame: advance the scene, handle held fingers, and redraw if anything changed.
   private func tick() {
     let now = CACurrentMediaTime()
     let dt = min(0.05, now - lastTick)

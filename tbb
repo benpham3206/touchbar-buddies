@@ -1,0 +1,112 @@
+#!/bin/zsh
+# tbb: the Touch Bar Buddies helper for trying changes. Run ./tbb with no arguments for help.
+set -euo pipefail
+
+ROOT=${0:A:h}
+APP=$ROOT/build/TouchBarBuddies.app
+BIN=$APP/Contents/MacOS/TouchBarBuddies
+LOG=$HOME/Library/Logs/TouchBarBuddies.log
+
+usage() {
+  cat <<'EOF'
+Touch Bar Buddies helper
+
+  ./tbb run                  build, then (re)start the app from this folder
+  ./tbb stop                 quit it (the normal Control Strip comes back)
+  ./tbb send <command>...    make the running app play something, e.g. ./tbb send toss
+  ./tbb commands             list the commands
+  ./tbb render <out.gif|out.png> [options]
+                             draw the Touch Bar offscreen, no Touch Bar needed, e.g.
+                               ./tbb render toss.gif --do toss --seconds 10
+                               ./tbb render wake.png --claude asleep --do tap-clawd --zoom
+                             (./tbb render with no file lists the options)
+  ./tbb shot [out.png]       screenshot the real Touch Bar
+  ./tbb logs                 follow the app's log
+  ./tbb sprites              rebuild the sprite cache from your Claude / ChatGPT apps
+
+To keep your changes after a restart, install them: ./install.sh
+EOF
+}
+
+# Builds this Mac's version when a source file changed since the last build.
+build_if_needed() {
+  if [[ ! -x $BIN || -n $(find "$ROOT/Sources" "$ROOT/Info.plist" -newer "$BIN") ]]; then
+    zsh "$ROOT/build.sh" --native
+  fi
+}
+
+stop_app() {
+  pkill -x TouchBarBuddies || return 0   # it puts the normal Control Strip back as it quits
+  for i in {1..20}; do
+    pgrep -x TouchBarBuddies >/dev/null || return 0
+    sleep 0.25
+  done
+}
+
+# The app listens for this distributed notification (AppDelegate.listenForCommands in main.swift).
+send() {
+  osascript -l JavaScript -e 'function run(argv) { ObjC.import("Foundation");
+    $.NSDistributedNotificationCenter.defaultCenter.postNotificationNameObjectUserInfoDeliverImmediately(
+      "dev.touchbarbuddies.command", argv[0], $(), true) }' "$1"
+}
+
+# The `case "…":` names in a Swift switch, read straight from the code so the list is never out of date.
+#   names <file> <function>
+names() {
+  awk "/func $2\\(/,/default:/" "$ROOT/Sources/$1" | grep -o 'case "[^:]*:' | grep -o '"[^"]*"' | tr -d '"'
+}
+
+commands() {
+  print "Animations (Scene.command in Scene.swift):"
+  print -C 4 -- $(names Scene.swift command) | sed 's/^/  /'
+  print "App (AppDelegate.handle in main.swift):"
+  print -C 4 -- $(names main.swift handle) | sed 's/^/  /'
+  print "\nwork-* and absent-* switch a buddy's state on/off; tap-* acts like a finger tap."
+}
+
+case ${1:-help} in
+  run)
+    build_if_needed
+    stop_app
+    mkdir -p "${LOG:h}" && touch "$LOG"
+    env=()
+    [[ -n ${TBB_DEBUG:-} ]] && env=(--env TBB_DEBUG=1)   # TBB_DEBUG=1 ./tbb run: log the busy/idle sampling
+    open -n "$APP" $env --stdout "$LOG" --stderr "$LOG"
+    print "Started $APP (./tbb logs to follow its log)"
+    ;;
+  stop)
+    stop_app
+    ;;
+  send)
+    shift
+    (( $# )) || { print "usage: ./tbb send <command>...   (see ./tbb commands)"; exit 1; }
+    pgrep -x TouchBarBuddies >/dev/null || print "note: Touch Bar Buddies isn't running (./tbb run)"
+    for cmd in "$@"; do send "$cmd"; done
+    ;;
+  commands)
+    commands
+    ;;
+  render)
+    shift
+    if (( ! $# )); then sed -n '/--render </,/^enum/p' "$ROOT/Sources/Render.swift" | sed -e '$d' -e 's|^// \{0,1\}||'; exit 1; fi
+    build_if_needed
+    "$BIN" --render "$@"
+    ;;
+  shot)
+    out=${2:-touchbar.png}
+    screencapture -b -x "$out" && print "saved $out"
+    ;;
+  logs)
+    mkdir -p "${LOG:h}" && touch "$LOG"
+    print "Following $LOG (Ctrl-C to stop)"
+    tail -n 40 -F "$LOG"
+    ;;
+  sprites)
+    build_if_needed
+    "$BIN" --build-sprites
+    print "Restart to use them: ./tbb run (or menu bar icon > Rebuild Sprites)"
+    ;;
+  *)
+    usage
+    ;;
+esac

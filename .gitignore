@@ -3,6 +3,10 @@ build/
 dist/
 *.zip
 
+# Renders and screenshots made with ./tbb in the repo root (docs/ holds the ones the README uses)
+/*.gif
+/*.png
+
 # Third-party artwork (Anthropic's Clawd, OpenAI's Codex pet) is never committed.
 # The app extracts it on first launch from the user's own installed apps.
 assets/

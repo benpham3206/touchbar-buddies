@@ -1,19 +1,21 @@
 #!/bin/zsh
 # Installs Touch Bar Buddies and starts it now and at every login.
 #
-#   From a checkout:  ./install.sh
 #   One-liner:        curl -fsSL https://raw.githubusercontent.com/benpham3206/touchbar-buddies/main/install.sh | zsh
+#   From a checkout:  ./install.sh   (run it again after changing the code: it rebuilds and restarts)
 #   Preview only:     ./install.sh --dry-run   (or: ... | zsh -s -- --dry-run)
 #
-# It builds the app from source, copies it to ~/Applications, and registers a LaunchAgent
-# (the same one the app's "Open at Login" menu item writes). Run uninstall.sh to undo.
+# The one-liner downloads the source to ~/touchbar-buddies (or updates it). Either way the app is built
+# on this Mac, so macOS has nothing to warn about, then copied to ~/Applications and registered as a
+# LaunchAgent (the same one the app's "Open at Login" menu item writes). Run uninstall.sh to undo.
 set -euo pipefail
 
 REPO=https://github.com/benpham3206/touchbar-buddies
-CLONE=$HOME/.touchbar-buddies                  # where the one-liner keeps the source
+CLONE=$HOME/touchbar-buddies                   # where the one-liner keeps the source (open it in Claude Code or Codex!)
 LABEL=dev.touchbarbuddies
 APP=$HOME/Applications/TouchBarBuddies.app
 PLIST=$HOME/Library/LaunchAgents/$LABEL.plist
+LOG=$HOME/Library/Logs/TouchBarBuddies.log     # ./tbb logs shows it
 SCRIPT=$0                                      # "zsh" when piped from curl (inside functions $0 is the function name)
 DRY=0
 
@@ -51,6 +53,8 @@ write_agent_plist() {
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>LimitLoadToSessionType</key><string>Aqua</string>
   <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$LOG</string>
 </dict>
 </plist>
 EOF
@@ -82,13 +86,19 @@ main() {
     exit 1
   fi
 
-  # 2. Find the source: this checkout, or a copy in ~/.touchbar-buddies for the one-liner.
+  # 2. Find the source: this checkout, or ~/touchbar-buddies for the one-liner.
   local src=${SCRIPT:A:h}
   if [[ ! -f $SCRIPT || ! -f $src/build.sh ]]; then
     src=$CLONE
     if [[ -d $src/.git ]]; then
       say "Updating the source in $src"
-      run git -C "$src" pull --ff-only --quiet
+      # Your own changes are kept: if they clash with the update, the update waits.
+      run git -C "$src" pull --ff-only --quiet ||
+        say "Couldn't update (you changed the same files?), so building your copy as it is."
+    elif [[ -f $src/build.sh ]]; then
+      say "Using the source in $src (not a git download, so it isn't updated)"
+    elif [[ -e $src ]]; then
+      fail "$src already exists but isn't a Touch Bar Buddies download. Move it away, then try again."
     else
       say "Downloading the source to $src"
       run git clone --quiet --depth 1 "$REPO" "$src"
@@ -120,13 +130,15 @@ main() {
   if (( DRY )); then say "Dry run finished: nothing was changed."; return; fi
   print "
 Done! Clawd and Codex now live in your Touch Bar. Tap a sleeping buddy to open its app.
+(The first start takes a few seconds while the sprites are made from your Claude and ChatGPT apps.)
 
 Optional: to let the buddies tile Claude and ChatGPT side by side and use the media keys, allow
 Accessibility for TouchBarBuddies: menu bar icon > \"Allow Window Tiling & Media Keys…\"
 (or System Settings > Privacy & Security > Accessibility). Each new build has a new signature,
-so if tiling stops after an update, remove TouchBarBuddies from that list and add it again.
+so after an update, remove TouchBarBuddies from that list and add it again.
 
-To uninstall, run: zsh ${(q-)src}/uninstall.sh"
+Make it yours: open ${(q-)src} in Claude Code or Codex and ask for a new animation.
+To uninstall: zsh ${(q-)src}/uninstall.sh"
 }
 
 main "$@"

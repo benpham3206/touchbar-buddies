@@ -38,7 +38,7 @@ final class SliderPopover {
 
   // MARK: Interaction
 
-  func hitsClose(_ p: CGPoint) -> Bool { hypot(p.x - closeCenter.x, p.y - closeCenter.y) < 22 }
+  /// A touch on the panel moves the knob; a touch anywhere else (the × included) closes it.
   func hitsPanel(_ p: CGPoint) -> Bool { panel.insetBy(dx: -6, dy: -10).contains(p) }
 
   /// Jump the knob to a finger position on the panel.

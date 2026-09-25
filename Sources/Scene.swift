@@ -127,6 +127,8 @@ final class Scene {
   let ground: CGFloat = 1
   var now: Double = 0
   var roaming = true
+  /// Offline renders (Render.swift): no random idle habits or games, so only the commands you ask for play.
+  var scripted = false
   var onLaunch: ((Who) -> Void)?
   var onFocus: ((Who) -> Void)?
 
@@ -311,6 +313,8 @@ final class Scene {
     case "peek": go { peekaboo(); after(6.5) { self.end() } }
     case "visit-clawd": go { clawdVisits() }
     case "visit-codex": go { codexVisits() }
+    case "visit-clawd-car": go { clawdVisits(car: true) }
+    case "visit-clawd-cloud": go { clawdVisits(car: false) }
     case "tap-clawd": tap(.clawd)
     case "tap-codex": tap(.codex)
     case "launch-clawd": launch(clawd, open: false)
@@ -336,7 +340,7 @@ final class Scene {
 
     for b in [clawd, codex] where has(b) {
       b.update(now, dt)
-      if !b.busy && b.base == .idle && !interacting { idleHabits(b) }
+      if !scripted && !b.busy && b.base == .idle && !interacting { idleHabits(b) }
       if b.base == .sleep && !b.busy && now - b.lastZ > 1.8 {
         b.lastZ = now
         emit(.bitmap(Sprite.zed, Palette.white), at: CGPoint(x: b.x + 9, y: b.who == .clawd ? 11 : 18), vx: 6, vy: 5, life: 2.2, size: 0.75)
@@ -346,7 +350,7 @@ final class Scene {
         emit(.glyph(bits.randomElement()!, Palette.codexLight, 6), at: CGPoint(x: b.x + 10, y: 12), vx: .random(in: 2...8), vy: 9, life: 1.4)
       }
     }
-    if !interacting && now > nextInteraction { direct() }
+    if !scripted && !interacting && now > nextInteraction { direct() }
 
     for i in particles.indices {
       particles[i].age += dt
@@ -429,7 +433,8 @@ final class Scene {
       (12, { self.packets() }),
       (8, { self.peekaboo(); self.after(6.5) { self.end() } }),
     ]
-    if roaming { options.append((16, { Bool.random() ? self.clawdVisits() : self.codexVisits() })) }
+    // Visits: Codex's run comes up as often as Clawd's kart/cloud trips.
+    if roaming { options += [(8, { self.clawdVisits() }), (8, { self.codexVisits() })] }
     var r = Double.random(in: 0..<options.map(\.0).reduce(0, +))
     for (w, run) in options {
       if r < w { run(); return }
@@ -551,10 +556,9 @@ final class Scene {
   }
 
   /// Clawd crosses the bar to visit — in his racing kart or on his cloud.
-  private func clawdVisits() {
+  private func clawdVisits(car: Bool = .random()) {
     let c = clawd, x = codex
     let spot = x.x + 34
-    let car = Bool.random()
     func trip(to target: CGFloat) -> [Step] {
       car ? [Step(clip: bank.cRaceIn, face: target, onEnd: { self.puff(at: CGPoint(x: c.x, y: 6), color: Palette.white) }),
              Step(clip: bank.cRaceDrive, loop: true, moveTo: target, speed: 250),
@@ -570,17 +574,55 @@ final class Scene {
     c.enqueue(trip(to: spot) + [meet, waveStep(c, toward: x.x)] + trip(to: c.pocket.midX) + [Step(clip: bank.cHappy, hold: 0.4, onEnd: { self.end() })])
   }
 
+  /// Codex runs over on foot to visit: a dusty take-off, a jumping high-five, a wave goodbye, and home again.
   private func codexVisits() {
     let c = clawd, x = codex
-    x.enqueue([
-      Step(moveTo: c.x - 30, speed: 150, run: true),
-      Step(clip: bank.xJump, face: c.x, onStart: {
-        self.highFive(between: x, c)
-        c.enqueue([Step(clip: self.bank.cSquat, hold: 0.08), self.happyHop(c), self.waveStep(c, toward: x.x)])
-      }),
-      Step(clip: bank.xReview),
-      Step(moveTo: x.pocket.midX, speed: 150, run: true, onEnd: { self.end() }),
-    ])
+    let side: CGFloat = x.x < c.x ? -1 : 1        // which side of Clawd he stops on
+    let spot = c.x + side * 23                     // close enough to slap hands, without the two overlapping
+    let look = side < 0 ? bank.cLookL : bank.cLookR
+    // Clawd's reactions are cued by Codex's beats so they stay in sync (unless Clawd got called away to work).
+    func cue(_ steps: [Step]) -> () -> Void {
+      { if c.base == .idle { c.interrupt(); c.enqueue(steps) } }
+    }
+    let meet = [
+      // Both arms up and a hop; the hands meet at the top of it.
+      Step(clip: bank.xReview.still(2), hold: 0.35, hopV: 45, onStart: { self.after(0.1) { self.highFive(between: x, c) } }),
+      Step(clip: bank.xReview.slice(3...5), onStart: cue([happyHop(c)])),
+      Step(clip: bank.xWave, loop: true, hold: bank.xWave.total * 2, onStart: cue([waveStep(c, toward: spot)])),
+    ]
+    x.enqueue(dash(x, from: x.x, to: spot,
+                   onBrake: cue([Step(clip: look, hold: 3)]),                        // Clawd spots him coming
+                   onStop: cue([armsUp(c, toward: x, hold: 3)]))                     // and raises a claw
+              + meet
+              + dash(x, from: spot, to: x.pocket.midX,
+                     onGo: { if c.base == .idle { c.enqueue([Step(clip: look, hold: 1.5)]) } },   // watches him go
+                     onStop: { self.end() }))
+  }
+
+  /// Codex's run from one spot to another: a dust puff as he takes off, legs striding in time with his speed,
+  /// then slowing steps into a stop exactly on `to`.
+  private func dash(_ b: Buddy, from: CGFloat, to: CGFloat, onGo: (() -> Void)? = nil,
+                    onBrake: (() -> Void)? = nil, onStop: (() -> Void)? = nil) -> [Step] {
+    let dir: CGFloat = to >= from ? 1 : -1
+    let row = dir > 0 ? bank.xRunR : bank.xRunL
+    let fast: CGFloat = 130, slow: CGFloat = 45
+    let brakeAt = abs(to - from) > 30 ? to - dir * 14 : from   // too short a hop to bother slowing down
+    // The four stride frames (leg forward, pass, other leg, pass), one per ~8pt travelled so the feet keep up
+    // with the ground instead of skating. The sheet's own timing is for running in place.
+    func legs(_ speed: CGFloat) -> Clip {
+      var c = row.slice(2...5)
+      c.durations = Array(repeating: Double(8 / speed), count: c.frames.count)
+      return c
+    }
+    let feet = { (ahead: CGFloat) in CGPoint(x: b.x + dir * ahead, y: self.ground + 3) }
+    return [
+      Step(clip: row.still(1), hold: 0.12, onStart: onGo),                               // lean into the first step
+      Step(clip: legs(fast), loop: true, moveTo: brakeAt, speed: fast,
+           onStart: { self.puff(at: feet(-6), color: Palette.white) }),
+      Step(clip: legs(slow), loop: true, moveTo: to, speed: slow,
+           onStart: { self.puff(at: feet(6), color: Palette.white); onBrake?() }),
+      Step(clip: row.still(7), hold: 0.2, onStart: onStop),                             // planted, facing where he ran
+    ]
   }
 
   // MARK: Step builders

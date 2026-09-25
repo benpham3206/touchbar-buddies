@@ -34,14 +34,16 @@ enum TouchBarPrivate {
   static func addSystemTrayItem(_ item: NSTouchBarItem) { callItem("addSystemTrayItem:", item) }
   static func removeSystemTrayItem(_ item: NSTouchBarItem) { callItem("removeSystemTrayItem:", item) }
 
-  static func present(_ bar: NSTouchBar, trayID: NSTouchBarItem.Identifier, fullWidth: Bool = true) {
+  /// Shows `bar` over the whole Touch Bar (placement 1), with our item standing in for the Control Strip.
+  static func present(_ bar: NSTouchBar, trayID: NSTouchBarItem.Identifier) {
     let cls: AnyClass = NSTouchBar.self
     let sel = NSSelectorFromString("presentSystemModalTouchBar:placement:systemTrayItemIdentifier:")
     if let m = class_getClassMethod(cls, sel) {
       typealias F = @convention(c) (AnyClass, Selector, NSTouchBar, Int64, NSString) -> Void
-      unsafeBitCast(method_getImplementation(m), to: F.self)(cls, sel, bar, fullWidth ? 1 : 0, trayID.rawValue as NSString)
+      unsafeBitCast(method_getImplementation(m), to: F.self)(cls, sel, bar, 1, trayID.rawValue as NSString)
       return
     }
+    // Older systems: no placement argument.
     let legacy = NSSelectorFromString("presentSystemModalTouchBar:systemTrayItemIdentifier:")
     if let m = class_getClassMethod(cls, legacy) {
       typealias F = @convention(c) (AnyClass, Selector, NSTouchBar, NSString) -> Void

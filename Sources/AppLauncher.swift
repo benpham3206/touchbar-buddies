@@ -62,7 +62,7 @@ enum AppLauncher {
 
   /// Moves the app's main window to one half of the main screen. A just-launched app may take a few seconds
   /// to show its window, so keep looking for up to 10 seconds.
-  static func tile(_ app: NSRunningApplication, leftHalf: Bool, until deadline: Date = Date() + 10) {
+  private static func tile(_ app: NSRunningApplication, leftHalf: Bool, until deadline: Date = Date() + 10) {
     guard AXIsProcessTrusted(), !app.isTerminated else { return }   // never prompt from a tap
     guard let window = mainWindow(of: app) else {
       if Date() < deadline {
@@ -77,7 +77,7 @@ enum AppLauncher {
   }
 
   /// The target rectangle in Accessibility coordinates.
-  static func halfOfScreen(left: Bool) -> CGRect? {
+  private static func halfOfScreen(left: Bool) -> CGRect? {
     guard let screen = NSScreen.main, let primary = NSScreen.screens.first else { return nil }
     // AppKit puts (0,0) at the bottom-left of the primary (menu bar) screen, y going up;
     // Accessibility puts it at the top-left of that same screen, y going down.

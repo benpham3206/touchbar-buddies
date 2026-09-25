@@ -1,6 +1,7 @@
 import AppKit
 
-// Tiny pixel-art effects (hearts, sparks, Zzz, balls…) drawn on a point grid.
+// The colors and tiny pixel-art effects (hearts, sparks, Zzz, balls…) that Scene draws around the buddies.
+// (The buddies themselves are Clips: see Clip.swift and Bank.swift.)
 
 func rgb(_ r: Int, _ g: Int, _ b: Int, _ a: CGFloat = 1) -> CGColor {
   CGColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: a)
@@ -16,6 +17,7 @@ enum Palette {
   static let confetti: [CGColor] = [clawd, codex, gold, rgb(140, 220, 150), heart, white]
 }
 
+/// Fills squares of `s` points on a grid whose origin is (ox, oy).
 struct Pen {
   let ctx: CGContext
   var ox: CGFloat
@@ -45,6 +47,7 @@ struct Pen {
   }
 }
 
+/// Effect bitmaps: one string per row, top to bottom, `#` = filled. Add one here, then emit it from Scene.
 enum Sprite {
   static let heart = [".#.#.", "#####", "#####", ".###.", "..#.."]
   static let spark = ["..#..", "..#..", "##.##", "..#..", "..#.."]

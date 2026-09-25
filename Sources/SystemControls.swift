@@ -88,7 +88,7 @@ enum SystemControls {
     return first.uint64Value
   }()
 
-  static var keyboardBrightness: Float {
+  private static var keyboardBrightness: Float {
     get {
       let sel = NSSelectorFromString("brightnessForKeyboard:")
       guard let client = keyboardClient, let m = class_getInstanceMethod(type(of: client), sel) else { return 0 }
@@ -103,6 +103,7 @@ enum SystemControls {
     }
   }
 
+  /// One of the 16 steps the hardware keys use.
   static func stepKeyboard(up: Bool) {
     let step: Float = 1.0 / 16
     let current = (keyboardBrightness / step).rounded() * step
@@ -154,12 +155,13 @@ enum SystemControls {
 
   // MARK: Apps & power
 
-  static func openApp(path: String) {
+  private static func openApp(path: String) {
     NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: .init())
   }
 
   static func missionControl() { openApp(path: "/System/Applications/Mission Control.app") }
 
+  /// Launchpad was renamed Apps in macOS 26.
   static func launchpad() {
     let fm = FileManager.default
     for p in ["/System/Applications/Apps.app", "/System/Applications/Launchpad.app"] where fm.fileExists(atPath: p) {

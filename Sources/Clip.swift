@@ -1,7 +1,10 @@
 import AppKit
 import ImageIO
 
-// A sequence of frames plus where the character's feet/center sit inside each frame.
+// Clip: one animation (frames + how long each shows) and how to draw it, plus the small image helpers
+// Bank and AssetCache use to cut and pixel-edit sprite sheets.
+
+/// A sequence of frames plus where the character's feet/center sit inside each frame.
 struct Clip {
   var frames: [CGImage]
   var durations: [Double]
@@ -13,6 +16,7 @@ struct Clip {
 
   var total: Double { durations.reduce(0, +) }
 
+  /// The frame showing `t` seconds into the clip.
   func index(at t: Double, loop: Bool) -> Int {
     guard frames.count > 1, total > 0 else { return 0 }
     var tt = loop ? t.truncatingRemainder(dividingBy: total) : min(max(0, t), total - 0.0001)
@@ -22,6 +26,8 @@ struct Clip {
     }
     return frames.count - 1
   }
+
+  // Variations of a clip: some of its frames, faster/slower, one frozen frame, or a replacement image.
 
   func slice(_ r: ClosedRange<Int>) -> Clip {
     var c = self
@@ -57,6 +63,7 @@ struct Clip {
     return c
   }
 
+  /// Draws frame `i` with the character's center at `x` and feet at `y` (points), snapped to the 2× pixel grid.
   func draw(_ i: Int, in ctx: CGContext, x: CGFloat, y: CGFloat, mirror: Bool = false, alpha: CGFloat = 1, squashY: CGFloat = 1) {
     let snap = { (v: CGFloat) in (v * 2).rounded() / 2 }
     let rect = CGRect(x: snap(x - anchorX), y: snap(y - baseline), width: size.width, height: size.height * squashY)

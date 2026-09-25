@@ -1,12 +1,16 @@
 import AppKit
 
+// The app: puts StripView on the Touch Bar (replacing the Control Strip), feeds it what Claude and Codex
+// are doing (ActivityMonitor), and adds the menu bar icon. Command-line modes are at the bottom.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NSMenuDelegate {
   static let stripID = NSTouchBarItem.Identifier("dev.touchbarbuddies.strip")
   static let trayID = NSTouchBarItem.Identifier("dev.touchbarbuddies.tray")
+  /// The LaunchAgent that starts us at login (install.sh writes the same one).
   static let agentLabel = "dev.touchbarbuddies"
-  static var agentURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(agentLabel).plist")
-  }
+  static var agentURL: URL { home("Library/LaunchAgents/\(agentLabel).plist") }
+  /// Where the LaunchAgent (and `./tbb run`) sends our output; `./tbb logs` shows it.
+  static var logURL: URL { home("Library/Logs/TouchBarBuddies.log") }
+  private static func home(_ path: String) -> URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(path) }
 
   private var scene: Scene!
   private var strip: StripView!
@@ -27,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     scene.onFocus = { who in AppLauncher.focus(who) }
     strip = StripView(scene: scene)
 
+    // Our bar covers the whole Touch Bar. macOS wants a tray item for it (tapping it brings the bar back).
     bar.delegate = self
     bar.defaultItemIdentifiers = [Self.stripID]
     trayItem = NSCustomTouchBarItem(identifier: Self.trayID)
@@ -38,11 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     presentBar()
     strip.start()
 
+    // The buddies follow their apps: asleep when closed, typing while busy.
     monitor.onChange = { [weak self] claude, codex in
       guard let self else { return }
       self.scene.setState(self.scene.clawd, claude)
       self.scene.setState(self.scene.codex, codex)
     }
+    // macOS drops our bar when the Touch Bar restarts, wakes or unlocks, so show it again then.
     monitor.onTouchBarServerRestart = { [weak self] in
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self?.presentBar() }
     }
@@ -60,28 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
       self?.presentBar()
     }
 
-    // Put the native Control Strip back when launchd or logout stops us.
-    for sig in [SIGTERM, SIGINT, SIGHUP] {
-      signal(sig, SIG_IGN)
-      let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-      src.setEventHandler { [weak self] in
-        self?.restoreNativeBar()
-        exit(0)
-      }
-      src.resume()
-      signalSources.append(src)
-    }
-    DistributedNotificationCenter.default().addObserver(forName: .init("dev.touchbarbuddies.command"), object: nil, queue: .main) { [weak self] n in
-      guard let self, let cmd = n.object as? String else { return }
-      switch cmd {
-      case "absent-claude": self.monitor.pretendAbsent[.claude] = !(self.monitor.pretendAbsent[.claude] ?? false)
-      case "absent-codex": self.monitor.pretendAbsent[.codex] = !(self.monitor.pretendAbsent[.codex] ?? false)
-      case "work-claude": self.toggleClaudeWork()
-      case "work-codex": self.toggleCodexWork()
-      case "slider-volume", "slider-brightness": self.strip.openPopover(volume: cmd == "slider-volume")
-      default: self.scene.command(cmd)
-      }
-    }
+    restoreBarWhenStopped()
+    listenForCommands()
     setUpStatusItem()
   }
 
@@ -102,6 +89,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     TouchBarPrivate.dismiss(bar)
     TouchBarPrivate.setControlStripPresence(Self.trayID, false)
     TouchBarPrivate.removeSystemTrayItem(trayItem)
+  }
+
+  /// Put the native Control Strip back when launchd, logout or Ctrl-C stops us.
+  private func restoreBarWhenStopped() {
+    for sig in [SIGTERM, SIGINT, SIGHUP] {
+      signal(sig, SIG_IGN)
+      let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+      src.setEventHandler { [weak self] in
+        self?.restoreNativeBar()
+        exit(0)
+      }
+      src.resume()
+      signalSources.append(src)
+    }
+  }
+
+  // MARK: Debug commands (`./tbb send <command>`)
+
+  /// Other processes can trigger animations by posting a distributed notification whose object is the command.
+  private func listenForCommands() {
+    DistributedNotificationCenter.default().addObserver(forName: .init("dev.touchbarbuddies.command"), object: nil, queue: .main) { [weak self] n in
+      if let command = n.object as? String { self?.handle(command) }
+    }
+  }
+
+  /// App-level commands live here; everything else is an animation (Scene.command).
+  /// Render.swift mirrors these for offline renders.
+  private func handle(_ command: String) {
+    switch command {
+    case "absent-claude": monitor.pretendAbsent[.claude] = !(monitor.pretendAbsent[.claude] ?? false)
+    case "absent-codex": monitor.pretendAbsent[.codex] = !(monitor.pretendAbsent[.codex] ?? false)
+    case "work-claude": toggleClaudeWork()
+    case "work-codex": toggleCodexWork()
+    case "slider-volume", "slider-brightness": strip.openPopover(volume: command == "slider-volume")
+    default: scene.command(command)
+    }
   }
 
   // MARK: Menu bar
@@ -159,9 +182,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         "Label": Self.agentLabel,
         "ProgramArguments": [Bundle.main.executablePath!],
         "RunAtLoad": true,
-        "KeepAlive": ["SuccessfulExit": false],
+        "KeepAlive": ["SuccessfulExit": false],   // restart after a crash, not after Quit
         "LimitLoadToSessionType": "Aqua",
         "ProcessType": "Interactive",
+        "StandardOutPath": Self.logURL.path,
+        "StandardErrorPath": Self.logURL.path,
       ]
       try? fm.createDirectory(at: Self.agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
       (plist as NSDictionary).write(to: Self.agentURL, atomically: true)
@@ -221,12 +246,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   }
 }
 
+// MARK: - Command line
+
 // `TouchBarBuddies --build-sprites`: rebuild the sprite cache headlessly, report, and exit (see AssetCache.swift).
 if CommandLine.arguments.contains("--build-sprites") {
   AssetCache.build(force: true)
   print(AssetCache.summary())
   exit(0)
 }
+
+// `TouchBarBuddies --render out.gif …`: draw the Touch Bar offscreen and exit (see Render.swift).
+if CommandLine.arguments.contains("--render") {
+  exit(Renderer.run(CommandLine.arguments))
+}
+
+// Otherwise: run as the menu bar app that owns the Touch Bar.
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

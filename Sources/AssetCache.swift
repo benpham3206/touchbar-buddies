@@ -7,6 +7,7 @@ import VideoToolbox
 //  • Clawd: the public GIFs on claude.ai (the same files the Claude app shows) + the laptop video inside Claude.app.
 //  • Codex: the pet sprite sheet packed inside the Codex desktop app (ChatGPT.app → app.asar).
 // Layout, exactly as Bank reads it: clawd/<name>.png + clawd/clawd.json, and codex/codex.webp.
+// Entry points: `directory`, `prepare()` (at launch), `build(force:)` and `summary()` (for --build-sprites).
 enum AssetCache {
   /// ~/Library/Application Support/TouchBarBuddies/sprites (TBB_SPRITES_DIR overrides it, for testing).
   static var directory: URL {
@@ -18,21 +19,21 @@ enum AssetCache {
   }
 
   // Clawd's GIFs, keyed by the name Bank uses.
-  static let gifs: [(name: String, path: String)] = [
+  private static let gifs: [(name: String, path: String)] = [
     ("crabwalking", "core/Clawd-CrabWalking.gif"),
     ("waving", "core/Clawd-Waving.gif"),
     ("lurking", "core/Clawd-Lurking.gif"),
     ("cloud-once", "persona/Clawd-Cloud-once.gif"),
     ("racingcar", "persona/Clawd-RacingCar.gif"),
   ]
-  static let gifBase = "https://claude.ai/images/clawd/"
-  static let laptopVideo = "Contents/Resources/ion-dist/images/install-hub/clawd-laptop.mov"
-  static let claudeIDs = ["com.anthropic.claudefordesktop"]
-  static let codexIDs = ["com.openai.codex", "com.openai.chat"]
-  static let codexSheetSize = (w: 1536, h: 2288)   // 8×11 cells of 192×208
+  private static let gifBase = "https://claude.ai/images/clawd/"
+  private static let laptopVideo = "Contents/Resources/ion-dist/images/install-hub/clawd-laptop.mov"
+  private static let claudeIDs = ["com.anthropic.claudefordesktop"]
+  private static let codexIDs = ["com.openai.codex", "com.openai.chat"]
+  private static let codexSheetSize = (w: 1536, h: 2288)   // 8×11 cells of 192×208
 
   // Every Clawd animation lives on the same 55×37-pixel stage, scaled up by a (possibly non-integer) factor.
-  static let stageW = 55, stageH = 37
+  private static let stageW = 55, stageH = 37
 
   private static var clawdDir: URL { directory.appendingPathComponent("clawd") }
   private static var codexURL: URL { directory.appendingPathComponent("codex/codex.webp") }
@@ -46,7 +47,7 @@ enum AssetCache {
     return directory
   }
 
-  static var isComplete: Bool {
+  private static var isComplete: Bool {
     let m = readManifest()
     return (gifs.map(\.name) + ["laptop"]).allSatisfy { has($0, m) } && exists(codexURL)
   }
@@ -114,13 +115,13 @@ enum AssetCache {
   // MARK: Clawd
 
   /// One animation: its frames laid out left to right, plus its clawd.json entry.
-  struct Strip {
+  private struct Strip {
     let image: CGImage
     let entry: [String: Any]
   }
 
   /// Clawd GIF → native-resolution strip. Each art pixel is read at its block's center.
-  static func stripFromGIF(_ data: Data) -> Strip? {
+  private static func stripFromGIF(_ data: Data) -> Strip? {
     guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
     var frames: [[UInt32]] = [], delays: [Int] = []
     for i in 0..<CGImageSourceGetCount(src) {
@@ -150,7 +151,7 @@ enum AssetCache {
 
   /// clawd-laptop.mov → strip. Video compression smears colors, so each block is snapped to the GIF palette,
   /// and the black laptop (invisible on the Touch Bar) is recolored gray while Clawd's eyes stay black.
-  static func stripFromVideo(_ url: URL) -> Strip? {
+  private static func stripFromVideo(_ url: URL) -> Strip? {
     guard let frames = blocking({ try await laptopFrames(url) }), !frames.isEmpty else { return nil }
     return makeStrip(frames, delays: Array(repeating: 83, count: frames.count), boxes: false)
   }
@@ -259,7 +260,7 @@ enum AssetCache {
   /// The Codex pet sheet from an installed Codex app. Today it's webview/assets/codex-spritesheet-v6-….webp inside
   /// Contents/Resources/app.asar; loose files are searched too. A future version may be renamed (v7…),
   /// so any codex-spritesheet*.webp with the right pixel size will do, newest first.
-  static func codexSheet(in apps: [URL]) -> (data: Data, source: String)? {
+  private static func codexSheet(in apps: [URL]) -> (data: Data, source: String)? {
     let isSheet = { (name: String) in name.hasPrefix("codex-spritesheet") && name.hasSuffix(".webp") }
     for app in apps {
       let resources = app.appendingPathComponent("Contents/Resources")
@@ -337,52 +338,7 @@ enum AssetCache {
 
   private static func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
 
-  static func log(_ s: String) { FileHandle.standardError.write(Data("[sprites] \(s)\n".utf8)) }
+  private static func log(_ s: String) { FileHandle.standardError.write(Data("[sprites] \(s)\n".utf8)) }
 }
 
 private final class ResultBox<T>: @unchecked Sendable { var value: T? }
-
-/// Minimal reader for Electron's app.asar: a JSON table of contents, then every file's bytes back to back.
-/// Header: UInt32 4 · UInt32 headerSize · UInt32 payloadSize · UInt32 jsonLength · JSON; file data starts at 8 + headerSize.
-struct Asar {
-  struct Entry {
-    let path: String, offset: Int, size: Int, unpacked: Bool
-    var name: String { (path as NSString).lastPathComponent }
-  }
-  let url: URL
-  let entries: [Entry]
-  private let dataStart: Int
-
-  init?(url: URL) {
-    guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
-    defer { try? fh.close() }
-    guard let head = try? fh.read(upToCount: 16), head.count == 16 else { return nil }
-    let word = { (i: Int) in Int(UInt32(littleEndian: head.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: i, as: UInt32.self) })) }
-    guard word(0) == 4, let json = try? fh.read(upToCount: word(12)),
-          let toc = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any] else { return nil }
-    var list: [Entry] = []
-    func walk(_ node: [String: Any], _ path: String) {
-      for (name, value) in node["files"] as? [String: Any] ?? [:] {
-        guard let v = value as? [String: Any] else { continue }
-        let p = path.isEmpty ? name : "\(path)/\(name)"
-        if v["files"] != nil { walk(v, p); continue }
-        let offset = (v["offset"] as? String).flatMap { Int($0) } ?? (v["offset"] as? Int) ?? 0   // a string in the TOC
-        list.append(Entry(path: p, offset: offset, size: v["size"] as? Int ?? 0, unpacked: v["unpacked"] as? Bool ?? false))
-      }
-    }
-    walk(toc, "")
-    self.url = url
-    entries = list
-    dataStart = 8 + word(4)
-  }
-
-  func read(_ e: Entry) -> Data? {
-    // Files Electron couldn't pack sit next to the archive in app.asar.unpacked/.
-    if e.unpacked { return try? Data(contentsOf: URL(fileURLWithPath: url.path + ".unpacked/" + e.path)) }
-    guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
-    defer { try? fh.close() }
-    guard (try? fh.seek(toOffset: UInt64(dataStart + e.offset))) != nil, let data = try? fh.read(upToCount: e.size),
-          data.count == e.size else { return nil }
-    return data
-  }
-}
