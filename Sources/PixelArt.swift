@@ -14,7 +14,8 @@ enum Palette {
   static let heart = rgb(255, 105, 140)
   static let gold = rgb(255, 214, 90)
   static let white = rgb(255, 255, 255)
-  static let confetti: [CGColor] = [clawd, codex, gold, rgb(140, 220, 150), heart, white]
+  static let green = rgb(140, 220, 150)
+  static let confetti: [CGColor] = [clawd, codex, gold, green, heart, white]
   // Ultra / ultracode mode.
   static let violet = rgb(167, 139, 250)        // #A78BFA
   static let violetDeep = rgb(139, 92, 246)     // #8B5CF6
@@ -63,6 +64,9 @@ enum Sprite {
   static let plane = ["#.....", "###...", ".#####", "###...", "#....."]
   static let dust = [".#.", "#.#", ".#."]
   static let envelope = ["#######", "#.###.#", "##.#.##", "###.###", "#######"]   // Codex's messages (the V is the flap)
+  // Finished work coming back: Clawd brings a ✓, Codex a little parcel with a bow.
+  static let check = ["......#", ".....##", "#...##.", "##.##..", ".###...", "..#...."]
+  static let parcel = [".##.##.", "...#...", "###.###", ".......", "###.###", "###.###", "###.###"]
 
   static func size(_ rows: [String]) -> (w: Int, h: Int) { (rows.map(\.count).max() ?? 0, rows.count) }
 }
