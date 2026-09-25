@@ -79,14 +79,16 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   Codex's window also moves to the left half of the screen and Claude's to the right.
 - **Tap an awake buddy** to say hi. **Long-press** it to bring its app to the front.
 - While Claude or Codex is **working**, its buddy types away on a laptop and the other one cheers it on.
-  When **both** are working, they pass little messages back and forth across the bar.
+  When **both** are working, every so often one gets up and crosses the bar to hand the other part of its work
+  in person; when that agent finishes, it travels back to deliver the result.
   When the work is done, there's confetti.
 - Every so often they **play together**: catch, paper planes, `{}` and `✻` packets, echo hops,
-  peek-a-boo, and visits across the bar by race car or cloud.
+  peek-a-boo, and visits across the bar by race car, cloud or on foot (Codex sprints, sneaks up on Clawd,
+  runs laps and sometimes trips).
 - The **buttons** work like the real ones. Tap brightness or volume for a slider, or press one and slide
   for a quick change. Hold a keyboard-light button to keep changing it.
-- The **Clawd icon in the menu bar** has Play Together, Visits Across the Bar, "pretend" switches to see
-  the working animations, Open at Login, Refresh Touch Bar, Rebuild Sprites and Quit.
+- The **Clawd icon in the menu bar** has Play Together (or pick a game under Play), Visits Across the Bar,
+  "pretend" switches to see the working animations, Open at Login, Refresh Touch Bar, Rebuild Sprites and Quit.
 
 ### Optional: window tiling and media keys
 
