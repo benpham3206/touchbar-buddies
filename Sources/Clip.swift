@@ -84,7 +84,14 @@ struct Clip {
 enum SheetLoader {
   static func image(_ url: URL) -> CGImage? {
     guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-    return CGImageSourceCreateImageAtIndex(src, 0, nil)
+    guard let lazy = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+    // Decode once into plain memory: frames are cropped out of these sheets, and every crop of a lazily
+    // decoded image decodes the whole file again (that alone made startup take ~2 s).
+    guard let ctx = CGContext(data: nil, width: lazy.width, height: lazy.height, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return lazy }
+    ctx.draw(lazy, in: CGRect(x: 0, y: 0, width: lazy.width, height: lazy.height))
+    return ctx.makeImage() ?? lazy
   }
 
   /// Bounding box of non-transparent pixels (top-left origin), nil if empty.

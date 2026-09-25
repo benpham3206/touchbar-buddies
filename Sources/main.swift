@@ -33,7 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     // Layer-backed only in the live app: turning layers on boots AppKit's app machinery, which `--render`
     // must avoid so it also works inside sandboxes (like Codex's) that can't register a GUI app.
     strip.wantsLayer = true
-    Icons.saveAll()   // lets `--render` reuse the glyphs, even inside a sandbox
 
     // Our bar covers the whole Touch Bar. macOS wants a tray item for it (tapping it brings the bar back).
     bar.delegate = self
@@ -46,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     TouchBarPrivate.setControlStripPresence(Self.trayID, true)
     presentBar()
     strip.start()
+    // After the bar is up (so it appears sooner): save the button glyphs for `--render`, even inside a sandbox.
+    DispatchQueue.main.async { Icons.saveAll() }
+    logAccessibility()
 
     // The buddies follow their apps: asleep when closed, typing while busy.
     monitor.onChange = { [weak self] claude, codex in
@@ -54,21 +56,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
       self.scene.setState(self.scene.codex, codex)
     }
     // macOS drops our bar when the Touch Bar restarts, wakes or unlocks, so show it again then.
-    monitor.onTouchBarServerRestart = { [weak self] in
-      DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self?.presentBar() }
-    }
+    monitor.onTouchBarServerRestart = { [weak self] in self?.presentBarSoon() }
     monitor.start()
 
     let ws = NSWorkspace.shared.notificationCenter
     for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
       ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
         self?.strip.start()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.presentBar() }
+        self?.presentBarSoon()
       }
     }
     ws.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in self?.strip.stop() }
     DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
-      self?.presentBar()
+      self?.strip.start()
+      self?.presentBarSoon()
     }
 
     restoreBarWhenStopped()
@@ -87,6 +88,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
 
   @objc func presentBar() {
     TouchBarPrivate.present(bar, trayID: Self.trayID)
+  }
+
+  /// Show the bar right away, and again over the next couple of seconds: while unlocking or restarting,
+  /// macOS may put its own Control Strip back once after we appear. Presenting again is harmless.
+  private func presentBarSoon() {
+    presentBar()
+    for delay in [0.3, 1.0, 2.5] {
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.presentBar() }
+    }
   }
 
   private func restoreNativeBar() {
@@ -158,7 +168,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     menu.addItem(item("Pretend Ultracode (Claude)", #selector(toggleClaudeUltra), on: monitor.pretendUltra[.claude] == true))
     menu.addItem(item("Pretend Ultra (Codex)", #selector(toggleCodexUltra), on: monitor.pretendUltra[.codex] == true))
     menu.addItem(.separator())
-    if !SystemControls.hasAccessibility {
+    logAccessibility()
+    if SystemControls.hasAccessibility {
+      // A visible "done" state once the permission is on (greyed out: nothing left to do).
+      let done = item("Window Tiling & Media Keys: Allowed", #selector(enableMediaKeys), on: true)
+      done.isEnabled = false
+      menu.addItem(done)
+    } else {
       menu.addItem(item("Allow Window Tiling & Media Keys…", #selector(enableMediaKeys)))
     }
     menu.addItem(item("Open at Login", #selector(toggleLogin), on: FileManager.default.fileExists(atPath: Self.agentURL.path)))
@@ -182,6 +198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   @objc private func toggleClaudeUltra() { monitor.pretendUltra[.claude] = !(monitor.pretendUltra[.claude] ?? false) }
   @objc private func toggleCodexUltra() { monitor.pretendUltra[.codex] = !(monitor.pretendUltra[.codex] ?? false) }
   @objc private func enableMediaKeys() { SystemControls.requestAccessibility() }
+
+  /// Logs the Accessibility permission when it changes (`./tbb logs`), to tell "not granted" from "not detected".
+  private var loggedAccessibility: Bool?
+  private func logAccessibility() {
+    let trusted = SystemControls.hasAccessibility
+    guard trusted != loggedAccessibility else { return }
+    loggedAccessibility = trusted
+    NSLog("[permissions] Accessibility (window tiling + media keys): %@", trusted ? "allowed" : "not allowed")
+  }
 
   @objc private func toggleLogin() {
     let fm = FileManager.default
