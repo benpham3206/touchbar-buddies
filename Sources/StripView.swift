@@ -47,8 +47,10 @@ final class StripView: NSView {
   private var pressed: Int?
   private var touchStates: [AnyHashable: TouchState] = [:]
   private var timer: Timer?
+  private var fps: Double = 0
   private var lastTick: Double = 0
-  private var frameCount = 0
+  private var lastFrameFull = true
+  private var nextVolumeCheck: Double = 0
   private var laidOutWidth: CGFloat = -1
   private var popover: SliderPopover?     // brightness / volume slider, when open
 
@@ -56,7 +58,6 @@ final class StripView: NSView {
     self.scene = scene
     super.init(frame: NSRect(x: 0, y: 0, width: 1004, height: 30))
     allowedTouchTypes = [.direct]
-    wantsLayer = true
   }
 
   required init?(coder: NSCoder) { fatalError() }
@@ -72,6 +73,9 @@ final class StripView: NSView {
 
   /// Lays the buttons out left to right, then gives the leftover width to the two buddy pockets.
   func relayout() {
+    // Buttons are about to be rebuilt: forget presses in flight so no touch points at an old button index.
+    pressed = nil
+    touchStates = touchStates.filter { if case .button = $0.value.target { return false } else { return true } }
     laidOutWidth = bounds.width
     let ids = fixedLayout
       ?? (CFPreferencesCopyAppValue("FullCustomized" as CFString, "com.apple.controlstrip" as CFString) as? [String])
@@ -151,19 +155,34 @@ final class StripView: NSView {
 
   // MARK: Render loop
 
-  /// Starts the 60 Hz animation timer (stopped while the screen sleeps).
+  // Battery: the loop runs only as fast as the scene needs (60 fps while things fly across the bar, 30 for hops and
+  // sparkles, 12 for plain sprite animation — the art's own frame rate — and 10 while both sleep), and redraws just
+  // the two pockets when nothing else moves. Nothing is skipped: every animation still plays at its own speed.
+
+  /// Starts the animation loop (also stopped while the screen sleeps).
   func start() {
     guard timer == nil else { return }
     lastTick = CACurrentMediaTime()
-    let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
-    RunLoop.main.add(t, forMode: .common)
-    timer = t
+    run(at: 30)
+    needsDisplay = true
   }
 
   func stop() {
     timer?.invalidate()
     timer = nil
+    fps = 0
   }
+
+  private func run(at newFPS: Double) {
+    guard newFPS != fps else { return }
+    timer?.invalidate()
+    let t = Timer(timeInterval: 1 / newFPS, repeats: true) { [weak self] _ in self?.tick() }
+    t.tolerance = 0.2 / newFPS   // lets macOS batch our wake-ups with others
+    RunLoop.main.add(t, forMode: .common)
+    timer = t
+    fps = newFPS
+  }
+
 
   /// One animation frame: advance the scene, handle held fingers, and redraw if anything changed.
   private func tick() {
@@ -172,9 +191,19 @@ final class StripView: NSView {
     lastTick = now
     scene.update(now, dt)
 
+    // Secret: hold both buddies at the same time for a moment → both go ultra for a few seconds.
+    var held: [Who: (key: AnyHashable, began: Double)] = [:]
+    for (key, st) in touchStates {
+      if case let .buddy(who) = st.target, !st.longFired, !st.moved { held[who] = (key, st.began) }
+    }
+    if held.count == 2, now - held.values.map(\.began).max()! > 0.8 {
+      for h in held.values { touchStates[h.key]?.longFired = true }   // letting go is then neither a tap nor a long-press
+      scene.ultraBoost()
+    }
+
     for (key, st) in touchStates {
       // Long-press a buddy → bring its app forward.
-      if case let .buddy(who) = st.target, !st.longFired, !st.moved, now - st.began > 0.6 {
+      if case let .buddy(who) = st.target, !st.longFired, !st.moved, now - st.began > 0.6, held.count < 2 {
         touchStates[key]?.longFired = true
         scene.longPress(who)
       }
@@ -190,11 +219,27 @@ final class StripView: NSView {
       if !p.touching && now - p.lastInteraction > 3.5 { p.close(now: now) }
       if p.isGone(now: now) { popover = nil }
     }
-    if frameCount % 30 == 0 { volumeIcon = Self.icon(forVolume: SystemControls.volume, muted: SystemControls.muted) }
+    if now > nextVolumeCheck {
+      nextVolumeCheck = now + 0.5
+      let icon = Self.icon(forVolume: SystemControls.volume, muted: SystemControls.muted)
+      if icon != volumeIcon { volumeIcon = icon; needsDisplay = true }
+    }
 
-    // 60fps while things fly around or fingers are down, 30fps otherwise.
-    frameCount += 1
-    if scene.animating || !touchStates.isEmpty || popover != nil || frameCount % 2 == 0 { needsDisplay = true }
+    // Pick the frame rate and redraw area for the next frame (see the note above start()).
+    let busy = !touchStates.isEmpty || popover != nil
+    switch busy ? .lively : scene.pace {
+    case .fast: run(at: 60)
+    case .lively: run(at: 30)
+    case .calm: run(at: 12)
+    case .asleep: run(at: 10)
+    }
+    let full = busy || scene.drawsOutsidePockets
+    if full || lastFrameFull {
+      needsDisplay = true
+    } else {
+      scene.redrawAreas.forEach { setNeedsDisplay($0) }
+    }
+    lastFrameFull = full
   }
 
   private static func icon(forVolume v: Float, muted: Bool) -> Icon {

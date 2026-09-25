@@ -133,6 +133,35 @@ final class Bank {
     xLook = (0..<16).map { $0 < 8 ? lookA.still($0) : lookB.still($0 - 8) }
   }
 
+  /// Clawd in ultracode mode: the same clip with his orange body turned violet (eyes and laptop untouched).
+  /// Frames are recolored the first time they're needed, then reused.
+  func violet(_ clip: Clip) -> Clip {
+    var c = clip
+    c.frames = clip.frames.map { img in
+      if let done = violetFrames[ObjectIdentifier(img)], done.source === img { return done.violet }
+      let violet = SheetLoader.edit(img) { g in
+        for i in 0..<(g.w * g.h) {
+          if Self.near(g.buf[i], Self.clawdBody) { g.buf[i] = Self.violetBody }
+          else if Self.near(g.buf[i], Self.clawdShade) { g.buf[i] = Self.violetShade }
+        }
+      }
+      violetFrames[ObjectIdentifier(img)] = (img, violet)
+      return violet
+    }
+    return c
+  }
+
+  private var violetFrames: [ObjectIdentifier: (source: CGImage, violet: CGImage)] = [:]
+  // Pixels as SheetLoader.rgba stores them (bytes R, G, B, A in memory).
+  private static func pixel(_ r: UInt32, _ g: UInt32, _ b: UInt32) -> UInt32 { 0xFF00_0000 | b << 16 | g << 8 | r }
+  // The GIFs and the laptop video use slightly different oranges (215 vs 217 red…), so match loosely.
+  private static let clawdBody = pixel(216, 119, 87), clawdShade = pixel(190, 104, 76)
+  private static let violetBody = pixel(167, 139, 250), violetShade = pixel(139, 92, 246)   // #A78BFA, #8B5CF6
+  private static func near(_ a: UInt32, _ b: UInt32) -> Bool {
+    guard a >> 24 == 0xFF else { return false }
+    return (0..<3).allSatisfy { c in abs(Int((a >> (8 * c)) & 0xFF) - Int((b >> (8 * c)) & 0xFF)) <= 6 }
+  }
+
   /// Codex look frame for a direction in degrees (0 = up, 90 = right, clockwise).
   func codexLook(degrees: CGFloat) -> Clip {
     var d = degrees.truncatingRemainder(dividingBy: 360)

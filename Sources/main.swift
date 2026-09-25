@@ -30,6 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     scene.onLaunch = { who in AppLauncher.open(who) }
     scene.onFocus = { who in AppLauncher.focus(who) }
     strip = StripView(scene: scene)
+    // Layer-backed only in the live app: turning layers on boots AppKit's app machinery, which `--render`
+    // must avoid so it also works inside sandboxes (like Codex's) that can't register a GUI app.
+    strip.wantsLayer = true
+    Icons.saveAll()   // lets `--render` reuse the glyphs, even inside a sandbox
 
     // Our bar covers the whole Touch Bar. macOS wants a tray item for it (tapping it brings the bar back).
     bar.delegate = self
@@ -122,6 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     case "absent-codex": monitor.pretendAbsent[.codex] = !(monitor.pretendAbsent[.codex] ?? false)
     case "work-claude": toggleClaudeWork()
     case "work-codex": toggleCodexWork()
+    case "ultra-claude": toggleClaudeUltra()
+    case "ultra-codex": toggleCodexUltra()
     case "slider-volume", "slider-brightness": strip.openPopover(volume: command == "slider-volume")
     default: scene.command(command)
     }
@@ -140,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
 
   func menuNeedsUpdate(_ menu: NSMenu) {
     menu.removeAllItems()
-    func describe(_ s: AgentState) -> String { !s.present ? "asleep — tap to open" : s.working ? "working" : "hanging out" }
+    func describe(_ s: AgentState) -> String { !s.present ? "asleep — tap to open" : s.ultra ? "working in ultra mode" : s.working ? "working" : "hanging out" }
     let header = { (t: String) in let i = NSMenuItem(title: t, action: nil, keyEquivalent: ""); i.isEnabled = false; return i }
     menu.addItem(header("Clawd: \(describe(monitor.claude))"))
     menu.addItem(header("Codex: \(describe(monitor.codex))"))
@@ -149,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     menu.addItem(item("Visits Across the Bar", #selector(toggleRoaming), on: scene.roaming))
     menu.addItem(item("Pretend Claude Is Working", #selector(toggleClaudeWork), on: monitor.pretendWorking[.claude] == true))
     menu.addItem(item("Pretend Codex Is Working", #selector(toggleCodexWork), on: monitor.pretendWorking[.codex] == true))
+    menu.addItem(item("Pretend Ultracode (Claude)", #selector(toggleClaudeUltra), on: monitor.pretendUltra[.claude] == true))
+    menu.addItem(item("Pretend Ultra (Codex)", #selector(toggleCodexUltra), on: monitor.pretendUltra[.codex] == true))
     menu.addItem(.separator())
     if !SystemControls.hasAccessibility {
       menu.addItem(item("Allow Window Tiling & Media Keys…", #selector(enableMediaKeys)))
@@ -171,6 +179,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   @objc private func toggleRoaming() { scene.roaming.toggle() }
   @objc private func toggleClaudeWork() { monitor.pretendWorking[.claude] = !(monitor.pretendWorking[.claude] ?? false) }
   @objc private func toggleCodexWork() { monitor.pretendWorking[.codex] = !(monitor.pretendWorking[.codex] ?? false) }
+  @objc private func toggleClaudeUltra() { monitor.pretendUltra[.claude] = !(monitor.pretendUltra[.claude] ?? false) }
+  @objc private func toggleCodexUltra() { monitor.pretendUltra[.codex] = !(monitor.pretendUltra[.codex] ?? false) }
   @objc private func enableMediaKeys() { SystemControls.requestAccessibility() }
 
   @objc private func toggleLogin() {

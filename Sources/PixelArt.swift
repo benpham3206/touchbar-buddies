@@ -15,6 +15,10 @@ enum Palette {
   static let gold = rgb(255, 214, 90)
   static let white = rgb(255, 255, 255)
   static let confetti: [CGColor] = [clawd, codex, gold, rgb(140, 220, 150), heart, white]
+  // Ultra / ultracode mode.
+  static let violet = rgb(167, 139, 250)        // #A78BFA
+  static let violetDeep = rgb(139, 92, 246)     // #8B5CF6
+  static let violetLight = rgb(221, 214, 254)   // #DDD6FE
 }
 
 /// Fills squares of `s` points on a grid whose origin is (ox, oy).
@@ -58,6 +62,7 @@ enum Sprite {
   static let ball = [".##.", "####", "####", ".##."]
   static let plane = ["#.....", "###...", ".#####", "###...", "#....."]
   static let dust = [".#.", "#.#", ".#."]
+  static let envelope = ["#######", "#.###.#", "##.#.##", "###.###", "#######"]   // Codex's messages (the V is the flap)
 
   static func size(_ rows: [String]) -> (w: Int, h: Int) { (rows.map(\.count).max() ?? 0, rows.count) }
 }

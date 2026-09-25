@@ -33,7 +33,7 @@ enum Renderer {
     var live = false
   }
 
-  static let tick = 1.0 / 60     // the simulation runs at the live app's 60 Hz
+  static let tick = 1.0 / 60     // simulate at 60 steps a second, the live app's fastest rate
   static let preroll = 2.0       // seconds simulated before the first frame, so the Zzz are already floating
 
   /// Handles `--render …` and returns the exit code.
@@ -103,6 +103,7 @@ enum Renderer {
   // MARK: Rendering
 
   static func render(_ o: Options) throws {
+    Icons.reuseSaved = true   // button glyphs saved by the live app, so this also works in sandboxes (see Icons)
     let bank = Bank(resources: AssetCache.directory)
     guard bank.hasClawd || bank.hasCodex else {
       throw UsageError(description: "no sprites in \(AssetCache.directory.path) — run ./tbb sprites")
@@ -183,6 +184,12 @@ enum Renderer {
       toggle(command.hasSuffix("claude") ? scene.clawd : scene.codex) { s in
         s.working.toggle()
         if s.working { s.appRunning = true; s.present = true }
+      }
+    case "ultra-claude", "ultra-codex":
+      // Ultra only shows while working, so switching it on also starts the work.
+      toggle(command.hasSuffix("claude") ? scene.clawd : scene.codex) { s in
+        s.ultra.toggle()
+        if s.ultra { s.working = true; s.appRunning = true; s.present = true }
       }
     case "slider-volume", "slider-brightness":
       print("note: \(command) only works in the live app (./tbb send \(command))")

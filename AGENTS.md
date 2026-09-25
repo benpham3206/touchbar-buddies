@@ -21,12 +21,12 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | File | What's in it |
 |---|---|
 | `Sources/main.swift` | `AppDelegate`: puts the bar on screen, wires ActivityMonitor to Scene, the menu bar menu, debug commands (`handle`), command-line modes (`--build-sprites`, `--render`) |
-| `Sources/StripView.swift` | The whole Touch Bar view: Control Strip layout (`relayout`), button drawing, touches, the 60 Hz timer, what each button does (`fire`) |
+| `Sources/StripView.swift` | The whole Touch Bar view: Control Strip layout (`relayout`), button drawing, touches, the render loop (adaptive frame rate, see `tick`), what each button does (`fire`) |
 | `Sources/Scene.swift` | The buddies' world: `Step`, `Buddy`, reactions to app state and touches, idle habits, the director that starts games, interactions, effects, drawing |
 | `Sources/Bank.swift` | Every animation `Clip` for both buddies, cut from the sprite cache (`c…` = Clawd, `x…` = Codex) |
 | `Sources/Clip.swift` | `Clip` (frames, timing, anchor, `draw`) and the image helpers `SheetLoader` / `PixelGrid` |
 | `Sources/PixelArt.swift` | Colors (`Palette`) and the tiny effect bitmaps (`Sprite.heart`, `.star`, `.ball`, `.plane`…) |
-| `Sources/Activity.swift` | `ActivityMonitor` / `AgentState`: is each app open, is its agent busy (CPU of its process tree) |
+| `Sources/Activity.swift` | `ActivityMonitor` / `AgentState`: is each app open, is its agent busy (CPU of its process tree, or an open turn in its session log), is it in ultra / ultracode (`CodexUltra`, `ClaudeUltra`) |
 | `Sources/AssetCache.swift` | Builds `~/Library/Application Support/TouchBarBuddies/sprites` from claude.ai GIFs, Claude.app and ChatGPT.app |
 | `Sources/Asar.swift` | Reads single files out of an Electron `app.asar` (the Codex sprite sheet lives in one) |
 | `Sources/AppLauncher.swift` | Opens Claude / ChatGPT on their coding screens and tiles their windows (Accessibility) |
@@ -44,10 +44,10 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 ## How it fits together
 
 ```
-ActivityMonitor (1 Hz) ── AgentState (open? busy?) ──▶ Scene.setState ──▶ arrive / fallAsleep / startWork / finishWork
+ActivityMonitor (every 2 s) ── AgentState (open? busy? ultra?) ──▶ Scene.setState ──▶ arrive / fallAsleep / startWork / finishWork
 StripView touches ──▶ Scene.tap / longPress                 (buttons ──▶ StripView.fire ──▶ SystemControls)
 ./tbb send <cmd> ──▶ AppDelegate.handle ──▶ Scene.command
-StripView timer (60 Hz) ──▶ Scene.update(now, dt) ──▶ Buddy.update (runs the Step queue), timers, particles
+StripView timer (6–60 fps, from Scene.pace) ──▶ Scene.update(now, dt) ──▶ Buddy.update (runs the Step queue), timers, particles
 StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects ──▶ the Touch Bar
 ```
 
@@ -72,8 +72,19 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
 - **Scene helpers:** `after(seconds) { … }` (timers on the scene clock), `emit(.bitmap(Sprite.heart, Palette.heart), at:)`
   for particles, `throwThing(_:from:to:arc:)` (the catcher raises its arms in time), `sparkle`, `puff`,
   `confetti`, `highFive`. Step builders: `happyHop`, `hopSteps`, `waveStep`, `throwSteps`, `catchSteps`, `stroll`.
+- **Frame rate (battery):** the render loop runs at the speed `Scene.pace` asks for: 60 fps while something flies
+  across the bar, 30 for hops/walks/particles/ultra, 12 for plain sprite animation, 10 while both sleep. It also
+  redraws only the pockets (`Scene.redrawAreas`) unless something is drawn outside them (`drawsOutsidePockets`).
+  Steps with `moveTo`, hops, particles and projectiles are already covered; if you add a new kind of smooth motion
+  or something drawn outside the pockets, teach `pace` / `drawsOutsidePockets` about it or it will look choppy or leave trails.
+- **Ultra / ultracode:** when Codex runs at `ultra` effort or Claude Code gets an `ultracode` prompt, that agent's
+  `AgentState.ultra` is true while it works: Clawd turns violet and types fast, Codex's symbols radiate in purple.
+  Try it with `./tbb send ultra-claude` / `ultra-codex` (or `--do` them in a render). Holding both buddies for 0.8 s
+  is a secret 8-second boost (`Scene.ultraBoost`).
+- **Messages while both work:** when both buddies are busy, the director (`direct()`) has them send each other a ✻ or
+  an envelope every few seconds without stopping (`message` command).
 - **Games:** only one at a time. `begin()` sets `interacting`, and the game **must** call `end()` when it's
-  done, or the director stops. `direct()` starts a random game from `startInteraction()` (a weighted list)
+  done (a 30 s safety limit ends a stuck one). `direct()` starts a random game from `startInteraction()` (a weighted list)
   every 14–30 s when both buddies are idle, or `support()` when one of them is working.
 - **Commands:** `Scene.command(name)` is a switch of named triggers (`go { … }` interrupts both buddies
   and calls `begin()` for you). App-level ones (`work-claude`, `absent-codex`, `slider-volume`…) are in

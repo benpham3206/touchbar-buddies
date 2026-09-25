@@ -2,7 +2,7 @@ import AppKit
 
 // Button glyphs for the recreated Expanded Control Strip.
 // SF Symbols where they match; Mission Control, Launchpad, mute and sleep are traced from the native bar.
-enum Icon: Hashable {
+enum Icon: Hashable, CaseIterable {
   case brightness, missionControl, launchpad, keyboardDown, keyboardUp, rewind, playPause, forward, mute, volume, sleep, lock
   case volume1, volume2, volume3                       // volume button shows the current level
   case closeDark, sunMin, sunMax, speakerMin, speakerMax  // slider popover
@@ -11,15 +11,39 @@ enum Icon: Hashable {
 enum Icons {
   private static var cache: [Icon: CGImage] = [:]
 
+  /// Drawing SF Symbols needs a full GUI app, which sandboxes (like Codex's) don't allow. So the live app saves
+  /// every glyph it draws here, and `--render` sets `reuseSaved` to read them back instead of drawing them.
+  static var savedDir: URL { AssetCache.directory.deletingLastPathComponent().appendingPathComponent("icons") }
+  static var reuseSaved = false
+
   /// A 72×30pt (144×60px) image with the glyph centered as on a native button.
   static func image(_ icon: Icon) -> CGImage {
     if let img = cache[icon] { return img }
-    let img = render(icon)
+    let file = savedDir.appendingPathComponent("\(icon).png")
+    let img: CGImage
+    if reuseSaved {
+      img = SheetLoader.image(file) ?? render(icon, symbols: false)   // missing: blank rather than crash
+    } else {
+      img = render(icon)
+      save(img, to: file)
+    }
     cache[icon] = img
     return img
   }
 
-  private static func render(_ icon: Icon) -> CGImage {
+  /// The live app draws and saves every glyph up front, so renders always find them.
+  static func saveAll() {
+    for icon in Icon.allCases { _ = image(icon) }
+  }
+
+  private static func save(_ img: CGImage, to file: URL) {
+    try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    guard let dest = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else { return }
+    CGImageDestinationAddImage(dest, img, nil)
+    CGImageDestinationFinalize(dest)
+  }
+
+  private static func render(_ icon: Icon, symbols: Bool = true) -> CGImage {
     let ctx = CGContext(data: nil, width: 144, height: 60, bitsPerComponent: 8, bytesPerRow: 144 * 4,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.scaleBy(x: 2, y: 2)
@@ -34,6 +58,7 @@ enum Icons {
     ctx.setLineCap(.round)
     ctx.setLineJoin(.round)
 
+    drawingSymbols = symbols
     switch icon {
     case .brightness: symbol("sun.max.fill", 16, .semibold)
     case .keyboardDown: symbol("light.min", 17, .bold)
@@ -104,7 +129,10 @@ enum Icons {
     return ctx.makeImage()!
   }
 
+  private static var drawingSymbols = true
+
   private static func symbol(_ name: String, _ size: CGFloat, _ weight: NSFont.Weight, color: NSColor = .white) {
+    guard drawingSymbols else { return }
     let config = NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color]))
     guard let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return }
     let s = img.size

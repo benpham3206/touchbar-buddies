@@ -29,7 +29,8 @@ final class Buddy {
   var queue: [Step] = []
   var step: Step?
   var stepStart: Double = 0
-  var state = AgentState()
+  var state = AgentState()             // what the buddy acts out
+  var reported = AgentState()          // what the activity monitor says (state = this + the secret ultra boost)
   var launching = false
   var taps: [Double] = []
   var nextIdle: Double = 3
@@ -38,6 +39,11 @@ final class Buddy {
   var stillUntil: Double = 0
   var shakeUntil: Double = 0
   var lastZ: Double = 0
+  var ultraStart: Double = -10         // when ultra mode began / ended (for the flash and the fading glow)
+  var ultraEnd: Double = -10
+  var nextFlourish: Double = 0         // next code symbol / ultra sparkle while working
+  var flourishes = 0                   // how many so far (alternates sides, turns Codex's ultra rings)
+  var symbol = 0                       // Codex's last code symbol (the next one is always different)
 
   init(_ who: Who) { self.who = who }
 
@@ -97,6 +103,7 @@ final class Buddy {
 enum Effect {
   case bitmap([String], CGColor)
   case glyph(String, CGColor, CGFloat)
+  case ring(CGColor)                   // an expanding ring; the particle's size is its final radius
 }
 
 struct Particle {
@@ -106,6 +113,7 @@ struct Particle {
   var age: Double = 0
   var gravity: CGFloat = 0
   var size: CGFloat = 1
+  var behind = false                   // drawn behind the buddies
 }
 
 struct Projectile {
@@ -115,6 +123,7 @@ struct Projectile {
   var duration: Double
   var arc: CGFloat
   var wobble: CGFloat = 0
+  var trail: CGColor? = nil            // leaves a faint sparkle trail
   var onArrive: (() -> Void)?
 }
 
@@ -136,14 +145,35 @@ final class Scene {
   private var projectiles: [Projectile] = []
   private var timers: [(at: Double, run: () -> Void)] = []
   private var interacting = false
+  private var interactionStart: Double = 0
   private var nextInteraction: Double = 12
   private var laidOut = false
+  private var boostUntil: Double = 0             // the secret two-buddy hold: both work in ultra mode until then
+  private var nextSender: Who = .codex           // messages between two busy buddies take turns
+  /// Codex's typing symbols. One consistent set, and no angle brackets.
+  private let codeBits = ["{", "}", "(", ")", ";"]
 
   init(bank: Bank) { self.bank = bank }
 
-  var animating: Bool {
-    !projectiles.isEmpty || !particles.isEmpty || !clawd.inPocket || !codex.inPocket
+  /// How often the Touch Bar needs redrawing right now; the render loop picks its frame rate from this.
+  enum Pace { case asleep, calm, lively, fast }
+  var pace: Pace {
+    let both = [clawd, codex]
+    if !projectiles.isEmpty || both.contains(where: { !$0.inPocket }) { return .fast }       // flying across the bar
+    if both.allSatisfy({ $0.base == .sleep && !$0.busy }) { return .asleep }                 // just Zzz
+    if !particles.isEmpty || both.contains(where: { $0.state.ultra || $0.hop > 0 || $0.step?.moveTo != nil }) { return .lively }
+    return .calm                                                                              // sprites tick at ~12 fps
   }
+
+  /// Whether anything is drawn outside the two pockets, so the whole bar must be redrawn (not just the pockets).
+  var drawsOutsidePockets: Bool {
+    if pace == .fast { return true }
+    let areas = redrawAreas
+    return particles.contains { p in !areas.contains { $0.contains(CGPoint(x: p.x, y: min(p.y, 29))) } }
+  }
+
+  /// The pockets plus a margin for sparkles and symbols that spill a little past their edges.
+  var redrawAreas: [CGRect] { [codex.pocket, clawd.pocket].map { $0.insetBy(dx: -14, dy: 0) } }
 
   func layout(codexPocket: CGRect, clawdPocket: CGRect) {
     codex.pocket = codexPocket
@@ -163,15 +193,31 @@ final class Scene {
   // MARK: Agent state
 
   func setState(_ b: Buddy, _ s: AgentState) {
+    b.reported = s
+    act(b)
+  }
+
+  /// Acts out what the monitor reported, plus the secret boost (hold both buddies → both work in ultra mode).
+  private func act(_ b: Buddy) {
     guard has(b) else { return }
+    var s = b.reported
+    if now < boostUntil && s.present { s.working = true; s.ultra = true }
     let old = b.state
     b.state = s
     if s.present != old.present {
       if s.present { arrive(b) } else { fallAsleep(b) }
-      return
-    }
-    if s.present && s.working != old.working {
+    } else if s.present && s.working != old.working {
       s.working ? startWork(b) : finishWork(b)
+    }
+    if s.ultra != old.ultra { s.ultra ? ultraOn(b) : ultraOff(b) }
+  }
+
+  /// The secret gesture: both buddies go ultra for a few seconds (only the ones that are awake).
+  func ultraBoost(seconds: Double = 8) {
+    boostUntil = now + seconds
+    for b in [clawd, codex] where has(b) {
+      if b.base == .sleep { puff(at: CGPoint(x: b.x, y: ground + 8), color: Palette.violet) }
+      act(b)
     }
   }
 
@@ -204,6 +250,73 @@ final class Scene {
     b.enqueue([Step(moveTo: b.home, speed: 40, run: true)])
     if b.who == .clawd { b.enqueue([Step(clip: bank.cWorkIn, face: b.home + 50)]) }
     else { b.enqueue([Step(clip: bank.xJump)]) }
+    // Both at their laptops now: the first message shouldn't take long.
+    if other(b).base == .work && !interacting { nextInteraction = min(nextInteraction, now + .random(in: 4...6)) }
+  }
+
+  // MARK: Ultra / ultracode
+
+  private func ultraOn(_ b: Buddy) {
+    b.ultraStart = now
+    b.nextFlourish = now + 0.5
+    ultraBurst(at: CGPoint(x: b.x + (b.who == .clawd ? 3 : 0), y: ground + 11))
+  }
+
+  private func ultraOff(_ b: Buddy) {
+    b.ultraEnd = now
+    puff(at: CGPoint(x: b.x, y: ground + 10), color: Palette.violet)
+  }
+
+  /// The purple flash when ultra kicks in: two rings and a starburst.
+  private func ultraBurst(at c: CGPoint) {
+    particles.append(Particle(effect: .ring(Palette.violetLight), x: c.x, y: c.y, vx: 0, vy: 0, life: 0.45, size: 22))
+    particles.append(Particle(effect: .ring(Palette.violet), x: c.x, y: c.y, vx: 0, vy: 0, life: 0.7, size: 38))
+    for i in 0..<14 {
+      let a = Double(i) / 14 * 2 * .pi, dx = CGFloat(cos(a)), dy = CGFloat(sin(a))
+      let big = i % 2 == 0
+      emit(.bitmap(big ? Sprite.spark : Sprite.star, big ? Palette.violet : Palette.violetLight),
+           at: CGPoint(x: c.x + dx * 8, y: c.y + dy * 4), vx: dx * (big ? 52 : 36), vy: dy * (big ? 22 : 15),
+           life: 0.65, size: big ? 0.6 : 1, behind: true)
+    }
+  }
+
+  /// While a buddy works in ultra mode: Clawd throws off violet sparkles, Codex's code symbols burst out in rings.
+  private func ultraAura(_ b: Buddy) {
+    guard now > b.nextFlourish else { return }
+    if b.who == .clawd {
+      b.nextFlourish = now + .random(in: 0.18...0.4)
+      emit(.bitmap(Sprite.star, Bool.random() ? Palette.violet : Palette.violetLight),
+           at: CGPoint(x: b.x + .random(in: -12...20), y: ground + .random(in: 3...20)), vx: .random(in: -4...4), vy: .random(in: 6...14),
+           life: .random(in: 0.4...0.7), size: Bool.random() ? 1 : 0.67)
+    } else {
+      // A ring made of each symbol once, spread evenly; every other ring is turned half a step, so its symbols
+      // fly out through the gaps of the one before.
+      b.nextFlourish = now + .random(in: 0.35...0.45)
+      b.flourishes += 1
+      let from = laptop(b), turn = Double(b.flourishes % 2) / 2 + .random(in: 0...0.15)
+      let n = codeBits.count
+      for i in 0..<n {
+        let a = (Double(i) + turn) / Double(n) * 2 * .pi, dx = CGFloat(cos(a)), dy = CGFloat(sin(a))
+        emit(.glyph(codeBits[(i + b.flourishes) % n], i % 2 == 0 ? Palette.violet : Palette.violetLight, 6.5),
+             at: CGPoint(x: from.x + dx * 7, y: from.y + dy * 3.5), vx: dx * 32, vy: dy * 13 + 2, life: 0.85, behind: true)
+      }
+    }
+  }
+
+  /// Codex typing: one code symbol drifts up from his laptop. At least ~half a second apart, at irregular gaps,
+  /// and alternating between two lanes so neighbours never overlap.
+  private func codeSymbol(_ b: Buddy) {
+    b.nextFlourish = now + 0.55 + .random(in: 0...0.9)
+    b.flourishes += 1
+    b.symbol = (b.symbol + .random(in: 1..<codeBits.count)) % codeBits.count   // never the same one twice in a row
+    let left = b.flourishes % 2 == 0
+    emit(.glyph(codeBits[b.symbol], Palette.codexLight, 6), at: CGPoint(x: b.x + (left ? 8 : 12), y: 12),
+         vx: left ? .random(in: 1...3) : .random(in: 5...8), vy: 9, life: 1.4)
+  }
+
+  /// Where the laptop sits while a buddy works (both type to their right).
+  private func laptop(_ b: Buddy) -> CGPoint {
+    CGPoint(x: b.x + (b.who == .clawd ? 16 : 6), y: ground + (b.who == .clawd ? 4 : 7) + b.hop)
   }
 
   private func finishWork(_ b: Buddy) {
@@ -320,6 +433,8 @@ final class Scene {
     case "launch-clawd": launch(clawd, open: false)
     case "launch-codex": launch(codex, open: false)
     case "notes": notes()
+    case "ultra": ultraBoost()
+    case "message": if clawd.base == .work && codex.base == .work { sendMessage() }
     default: break
     }
   }
@@ -337,6 +452,13 @@ final class Scene {
     let due = timers.filter { $0.at <= now }
     timers.removeAll { $0.at <= now }
     due.forEach { $0.run() }
+    if boostUntil > 0 && now >= boostUntil {
+      boostUntil = 0
+      act(clawd)
+      act(codex)
+    }
+    // Safety net: an interaction cut short (a tap, work starting mid-visit) never reaches its end().
+    if interacting && now - interactionStart > 30 { end() }
 
     for b in [clawd, codex] where has(b) {
       b.update(now, dt)
@@ -345,9 +467,10 @@ final class Scene {
         b.lastZ = now
         emit(.bitmap(Sprite.zed, Palette.white), at: CGPoint(x: b.x + 9, y: b.who == .clawd ? 11 : 18), vx: 6, vy: 5, life: 2.2, size: 0.75)
       }
-      if b.who == .codex && b.base == .work && !b.busy && Int(now * 10) % 9 == 0 && Double.random(in: 0...1) < 0.2 {
-        let bits = ["{", "}", "(", ")", ";"]   // one consistent set of code-ish symbols
-        emit(.glyph(bits.randomElement()!, Palette.codexLight, 6), at: CGPoint(x: b.x + 10, y: 12), vx: .random(in: 2...8), vy: 9, life: 1.4)
+      if b.base == .work && b.state.ultra && !b.busy {
+        ultraAura(b)
+      } else if b.who == .codex && b.base == .work && !b.busy && now > b.nextFlourish {
+        codeSymbol(b)
       }
     }
     if !scripted && !interacting && now > nextInteraction { direct() }
@@ -359,6 +482,9 @@ final class Scene {
       particles[i].y += particles[i].vy * CGFloat(dt)
     }
     particles.removeAll { $0.age >= $0.life }
+    for p in projectiles where p.trail != nil && Double.random(in: 0...1) < dt * 12 {
+      emit(.bitmap(Sprite.star, p.trail!), at: position(of: p), vx: .random(in: -3...3), vy: .random(in: -4...2), life: 0.45, size: 0.5)
+    }
     let landed = projectiles.filter { now - $0.start >= $0.duration }
     projectiles.removeAll { now - $0.start >= $0.duration }
     landed.forEach { $0.onArrive?() }
@@ -411,12 +537,17 @@ final class Scene {
       support(x, worker: c)
     } else if x.base == .work && c.base == .idle && free(c) {
       support(c, worker: x)
+    } else if c.base == .work && x.base == .work && free(c) && free(x) {
+      sendMessage()
     } else {
       nextInteraction = now + 5
     }
   }
 
-  private func begin() { interacting = true }
+  private func begin() {
+    interacting = true
+    interactionStart = now
+  }
   private func end() {
     interacting = false
     nextInteraction = now + .random(in: 14...30)
@@ -465,6 +596,27 @@ final class Scene {
       helper.enqueue([watch])
       after(3.6) { self.end() }
     }
+  }
+
+  /// Both are working: one sends the other a little message across the bar without looking up from the keyboard.
+  /// The receiver gives a tiny hop and keeps typing. They take turns; in ultra mode the message is violet.
+  private func sendMessage() {
+    let a = nextSender == .clawd ? clawd : codex, b = other(a)
+    nextSender = b.who
+    nextInteraction = now + .random(in: 5...9)
+    let ultra = a.state.ultra
+    let note: Effect = a.who == .clawd
+      ? .glyph("✻", ultra ? Palette.violet : Palette.clawd, 12)
+      : .bitmap(Sprite.envelope, ultra ? Palette.violet : Palette.codexLight)
+    let from = laptop(a), to = CGPoint(x: b.x + (b.who == .clawd ? 2 : 0), y: ground + 17)
+    puff(at: from, color: ultra ? Palette.violetLight : Palette.white)
+    projectiles.append(Projectile(effect: note, from: from, to: to, start: now,
+                                  duration: Double(max(0.8, abs(to.x - from.x) / 420)), arc: 8, wobble: 1.2,
+                                  trail: ultra ? Palette.violet : a.who == .clawd ? Palette.clawd : Palette.codexLight, onArrive: {
+      b.hopV = 42
+      b.hop = max(b.hop, 0.01)
+      self.sparkle(at: CGPoint(x: b.x, y: 20), color: ultra ? Palette.violetLight : Palette.gold)
+    }))
   }
 
   // MARK: Interactions
@@ -526,7 +678,7 @@ final class Scene {
     let (x, c) = (codex, clawd)
     x.enqueue(throwSteps(x, toward: c))
     after(windup) {
-      self.throwThing(.glyph(">_", Palette.codexLight, 8), from: x, to: c, arc: 5) {
+      self.throwThing(.glyph("{}", Palette.codexLight, 8), from: x, to: c, arc: 5) {
         c.enqueue(self.catchSteps(c))
         self.after(0.6) {
           c.enqueue(self.throwSteps(c, toward: x))
@@ -692,13 +844,14 @@ final class Scene {
     }
   }
 
-  private func emit(_ e: Effect, at p: CGPoint, vx: CGFloat = 0, vy: CGFloat = 12, life: Double = 1.1, size: CGFloat = 1) {
-    particles.append(Particle(effect: e, x: p.x, y: p.y, vx: vx, vy: vy, life: life, size: size))
+  private func emit(_ e: Effect, at p: CGPoint, vx: CGFloat = 0, vy: CGFloat = 12, life: Double = 1.1, size: CGFloat = 1,
+                    behind: Bool = false) {
+    particles.append(Particle(effect: e, x: p.x, y: p.y, vx: vx, vy: vy, life: life, size: size, behind: behind))
   }
 
-  private func sparkle(at p: CGPoint) {
+  private func sparkle(at p: CGPoint, color: CGColor = Palette.gold) {
     for _ in 0..<4 {
-      emit(.bitmap(Sprite.star, Palette.gold), at: CGPoint(x: p.x + .random(in: -9...9), y: p.y + .random(in: -3...3)),
+      emit(.bitmap(Sprite.star, color), at: CGPoint(x: p.x + .random(in: -9...9), y: p.y + .random(in: -3...3)),
            vx: .random(in: -10...10), vy: .random(in: 4...14), life: 0.7)
     }
   }
@@ -728,10 +881,11 @@ final class Scene {
   // MARK: Drawing
 
   func draw(_ ctx: CGContext) {
+    for p in particles where p.behind { drawParticle(p, ctx) }
     let order = [clawd, codex].sorted { ($0.inPocket ? 0 : 1) < ($1.inPocket ? 0 : 1) }
     for b in order where has(b) { drawBuddy(b, ctx) }
     for p in projectiles { drawProjectile(p, ctx) }
-    for p in particles { drawParticle(p, ctx) }
+    for p in particles where !p.behind { drawParticle(p, ctx) }
   }
 
   private func drawBuddy(_ b: Buddy, _ ctx: CGContext) {
@@ -767,6 +921,7 @@ final class Scene {
         }
       case .work:
         clip = b.who == .clawd ? bank.cWorkLoop : bank.xWork
+        if b.state.ultra { clip = clip.speed(b.who == .clawd ? 3 : 2.5) }   // typing like mad
         frame = clip.index(at: now, loop: true)
       case .idle:
         if let s = b.still, now < b.stillUntil { clip = s }
@@ -774,27 +929,63 @@ final class Scene {
       }
     }
     if now < b.shakeUntil { drawX += Int(now * 20) % 2 == 0 ? -1 : 1 }
+    drawUltraGlow(b, ctx)
+    if b.who == .clawd && b.state.ultra { clip = bank.violet(clip) }
     clip.draw(frame, in: ctx, x: drawX, y: ground + b.hop, mirror: mirror, alpha: alpha, squashY: squash)
     if b.step?.clipRect != nil && (b.step?.run == true || b.step?.clip != nil) { ctx.restoreGState() }
 
     // Claude Code's spinner above Clawd while he works.
+    // In ultracode it turns violet and spins much faster.
     if b.who == .clawd && b.base == .work && !b.busy {
       let frames = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
-      drawGlyph(frames[Int(now / 0.12) % frames.count], at: CGPoint(x: b.x - 5, y: 22.5), color: Palette.clawd, size: 9)
+      let beat = b.state.ultra ? 0.045 : 0.12
+      drawGlyph(frames[Int(now / beat) % frames.count], at: CGPoint(x: b.x - 5, y: 22.5),
+                color: b.state.ultra ? Palette.violet : Palette.clawd, size: 9)
     }
   }
 
-  private func drawProjectile(_ p: Projectile, _ ctx: CGContext) {
+  /// A soft violet glow behind a buddy in ultra mode: it pulses, flares up as ultra starts and fades out after.
+  private func drawUltraGlow(_ b: Buddy, _ ctx: CGContext) {
+    let flare = max(0, 1 - (now - b.ultraStart) / 0.6)
+    let strength = b.state.ultra ? 1 : max(0, 1 - (now - b.ultraEnd) / 0.6)
+    guard strength > 0 else { return }
+    let pulse = 0.5 + 0.5 * sin(now * 4)
+    let alpha = CGFloat(strength * (0.2 + 0.1 * pulse) + 0.45 * flare)
+    let center = CGPoint(x: b.x + (b.who == .clawd ? 4 : 2), y: ground + 10 + b.hop)
+    let glow = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                          colors: [Palette.violetDeep.copy(alpha: alpha)!, Palette.violetDeep.copy(alpha: 0)!] as CFArray, locations: [0, 1])!
+    ctx.saveGState()
+    // Squash the circle into a wide oval so it fits the 30pt bar.
+    ctx.translateBy(x: center.x, y: center.y)
+    ctx.scaleBy(x: 1.3, y: 0.8)
+    ctx.drawRadialGradient(glow, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: CGFloat(17 + 8 * flare), options: [])
+    ctx.restoreGState()
+  }
+
+  private func position(of p: Projectile) -> CGPoint {
     let u = CGFloat(min(1, max(0, (now - p.start) / p.duration)))
     let x = p.from.x + (p.to.x - p.from.x) * u
     var y = p.from.y + (p.to.y - p.from.y) * u + p.arc * 4 * u * (1 - u)
     y += p.wobble * CGFloat(sin(Double(u) * 12))
-    y = min(y, 26)
-    draw(p.effect, at: CGPoint(x: x, y: y), size: 1, alpha: 1, flip: p.to.x < p.from.x, outline: true, ctx)
+    return CGPoint(x: x, y: min(y, 26))
+  }
+
+  private func drawProjectile(_ p: Projectile, _ ctx: CGContext) {
+    draw(p.effect, at: position(of: p), size: 1, alpha: 1, flip: p.to.x < p.from.x, outline: true, ctx)
   }
 
   private func drawParticle(_ p: Particle, _ ctx: CGContext) {
     let fade = CGFloat(max(0, 1 - pow(p.age / p.life, 2)))
+    if case let .ring(color) = p.effect {
+      let r = p.size * CGFloat(0.35 + 0.65 * sqrt(p.age / p.life))   // starts around the buddy, eases out
+      ctx.saveGState()
+      ctx.setAlpha(fade)
+      ctx.setStrokeColor(color)
+      ctx.setLineWidth(1.5)
+      ctx.strokeEllipse(in: CGRect(x: p.x - r, y: p.y - r * 0.55, width: r * 2, height: r * 1.1))
+      ctx.restoreGState()
+      return
+    }
     draw(p.effect, at: CGPoint(x: p.x, y: p.y), size: p.size, alpha: fade, flip: false, outline: false, ctx)
   }
 
@@ -814,16 +1005,33 @@ final class Scene {
       Pen(ctx: ctx, ox: ox, oy: oy, s: size).bitmap(rows, 0, 0, color, flip: flip)
     case let .glyph(s, color, fontSize):
       drawGlyph(s, at: p, color: color, size: fontSize, outline: outline)
+    case .ring:
+      break   // only ever a particle (drawParticle)
     }
     ctx.restoreGState()
   }
 
+  /// Text glyphs (the ✻ spinner, code symbols) are laid out once and then reused as images: cheaper every frame.
+  private var glyphs: [String: (image: CGImage, size: CGSize)] = [:]
+
   private func drawGlyph(_ s: String, at p: CGPoint, color: CGColor, size: CGFloat, outline: Bool = false) {
-    let font = NSFont.monospacedSystemFont(ofSize: size, weight: .bold)
-    var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(cgColor: color) ?? .white]
-    if outline { attrs[.strokeColor] = NSColor.black; attrs[.strokeWidth] = -3.0 }
-    let str = NSAttributedString(string: s, attributes: attrs)
-    let sz = str.size()
-    str.draw(at: NSPoint(x: p.x - sz.width / 2, y: p.y - sz.height / 2))
+    let key = "\(s)|\(color.components ?? [])|\(size)|\(outline)"
+    if glyphs[key] == nil {
+      let font = NSFont.monospacedSystemFont(ofSize: size, weight: .bold)
+      var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(cgColor: color) ?? .white]
+      if outline { attrs[.strokeColor] = NSColor.black; attrs[.strokeWidth] = -3.0 }
+      let str = NSAttributedString(string: s, attributes: attrs)
+      let sz = str.size()
+      let bitmap = CGContext(data: nil, width: Int(ceil(sz.width * 2)), height: Int(ceil(sz.height * 2)), bitsPerComponent: 8, bytesPerRow: 0,
+                             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      bitmap.scaleBy(x: 2, y: 2)
+      NSGraphicsContext.saveGraphicsState()
+      NSGraphicsContext.current = NSGraphicsContext(cgContext: bitmap, flipped: false)
+      str.draw(at: .zero)
+      NSGraphicsContext.restoreGraphicsState()
+      glyphs[key] = (bitmap.makeImage()!, sz)
+    }
+    guard let g = glyphs[key], let ctx = NSGraphicsContext.current?.cgContext else { return }
+    ctx.draw(g.image, in: CGRect(x: p.x - g.size.width / 2, y: p.y - g.size.height / 2, width: g.size.width, height: g.size.height))
   }
 }

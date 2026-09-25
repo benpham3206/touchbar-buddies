@@ -79,8 +79,9 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   Codex's window also moves to the left half of the screen and Claude's to the right.
 - **Tap an awake buddy** to say hi. **Long-press** it to bring its app to the front.
 - While Claude or Codex is **working**, its buddy types away on a laptop and the other one cheers it on.
+  When **both** are working, they pass little messages back and forth across the bar.
   When the work is done, there's confetti.
-- Every so often they **play together**: catch, paper planes, `>_` and `✻` packets, echo hops,
+- Every so often they **play together**: catch, paper planes, `{}` and `✻` packets, echo hops,
   peek-a-boo, and visits across the bar by race car or cloud.
 - The **buttons** work like the real ones. Tap brightness or volume for a slider, or press one and slide
   for a quick change. Hold a keyboard-light button to keep changing it.
@@ -100,7 +101,8 @@ TouchBarBuddies from the Accessibility list and add it again.
 ### Easter eggs
 
 There are a few. We won't spoil them, but… what happens if you poke a buddy a few times in a row? What
-about the ⏯ key? And have you tried holding both buddies at once…?
+about the ⏯ key? And have you tried holding both buddies at once…? Or run Codex at **ultra** effort, or say
+**ultracode** to Claude Code, and keep an eye on the Touch Bar.
 
 ## Make it yours with Claude Code or Codex
 
