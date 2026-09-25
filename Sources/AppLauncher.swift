@@ -50,8 +50,10 @@ enum AppLauncher {
       guard let running else { return }
       DispatchQueue.main.async { tile(running, leftHalf: who == .codex) }
     }
-    // Opening an already-running app also "reopens" it, which makes it show a window if all were closed.
-    if withLink, let link = app.link.flatMap(URL.init(string:)) {
+    // A new coding session only when the app is starting up; if it's already open, just bring its window
+    // forward as it is. (Opening a running app also "reopens" it, which shows a window if all were closed.)
+    let alreadyOpen = !NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID).isEmpty
+    if withLink, !alreadyOpen, let link = app.link.flatMap(URL.init(string:)) {
       ws.open([link], withApplicationAt: appURL, configuration: config, completionHandler: done)
     } else {
       ws.openApplication(at: appURL, configuration: config, completionHandler: done)
