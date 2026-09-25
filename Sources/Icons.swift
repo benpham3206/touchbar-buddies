@@ -33,19 +33,24 @@ enum Icons {
 
   /// The live app draws and saves every glyph up front, so renders always find them.
   static func saveAll() {
-    for icon in Icon.allCases { _ = image(icon) }
+    // Drawn and written in the background: drawing 20 SF Symbols on the main thread stalled the animation.
+    saver.async {
+      for icon in Icon.allCases { write(render(icon), to: savedDir.appendingPathComponent("\(icon).png")) }
+    }
   }
 
   /// PNG encoding and disk writes happen in the background so the Touch Bar's animation never waits on them.
   private static let saver = DispatchQueue(label: "dev.touchbarbuddies.icons", qos: .utility)
 
   private static func save(_ img: CGImage, to file: URL) {
-    saver.async {
-      try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-      guard let dest = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else { return }
-      CGImageDestinationAddImage(dest, img, nil)
-      CGImageDestinationFinalize(dest)
-    }
+    saver.async { write(img, to: file) }
+  }
+
+  private static func write(_ img: CGImage, to file: URL) {
+    try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    guard let dest = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else { return }
+    CGImageDestinationAddImage(dest, img, nil)
+    CGImageDestinationFinalize(dest)
   }
 
   private static func render(_ icon: Icon, symbols: Bool = true) -> CGImage {
@@ -63,7 +68,10 @@ enum Icons {
     ctx.setLineCap(.round)
     ctx.setLineJoin(.round)
 
-    drawingSymbols = symbols
+    // SF Symbols need a full GUI app (see `reuseSaved`), so a render may skip them.
+    func symbol(_ name: String, _ size: CGFloat, _ weight: NSFont.Weight, color: NSColor = .white) {
+      if symbols { drawSymbol(name, size, weight, color: color) }
+    }
     switch icon {
     case .brightness: symbol("sun.max.fill", 16, .semibold)
     case .keyboardDown: symbol("light.min", 17, .bold)
@@ -134,10 +142,7 @@ enum Icons {
     return ctx.makeImage()!
   }
 
-  private static var drawingSymbols = true
-
-  private static func symbol(_ name: String, _ size: CGFloat, _ weight: NSFont.Weight, color: NSColor = .white) {
-    guard drawingSymbols else { return }
+  private static func drawSymbol(_ name: String, _ size: CGFloat, _ weight: NSFont.Weight, color: NSColor) {
     let config = NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color]))
     guard let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return }
     let s = img.size

@@ -44,7 +44,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     TouchBarPrivate.addSystemTrayItem(trayItem)
     TouchBarPrivate.setControlStripPresence(Self.trayID, true)
     presentBar()
-    strip.start()
     // After the bar is up (so it appears sooner): save the button glyphs for `--render`, even inside a sandbox.
     DispatchQueue.main.async { Icons.saveAll() }
     logAccessibility()
@@ -76,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     restoreBarWhenStopped()
     listenForCommands()
     setUpStatusItem()
+    strip.start()   // last, so the animation clock starts once launch work is done
   }
 
   func applicationWillTerminate(_ notification: Notification) { restoreNativeBar() }
