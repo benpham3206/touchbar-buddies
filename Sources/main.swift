@@ -70,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
       self?.strip.start()
       self?.presentBarSoon()
+      self?.scene.welcomeBack()   // the buddies greet you after you unlock
     }
 
     restoreBarWhenStopped()
