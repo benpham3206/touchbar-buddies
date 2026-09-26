@@ -48,8 +48,12 @@ enum AppLauncher {
     let config = NSWorkspace.OpenConfiguration()
     config.activates = true
     let done: (NSRunningApplication?, Error?) -> Void = { running, _ in
-      guard withLink, let running else { return }   // only a freshly opened app gets tiled
-      DispatchQueue.main.async { tile(running, leftHalf: who == .codex) }
+      DispatchQueue.main.async {
+        guard let running = running ?? NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID).first
+        else { return }
+        bringForward(running)
+        if withLink { tile(running, leftHalf: who == .codex) }   // only a freshly opened app gets tiled
+      }
     }
     // A new coding session only when the app is starting up; if it's already open, just bring its window
     // forward as it is. (Opening a running app also "reopens" it, which shows a window if all were closed.)
@@ -59,6 +63,26 @@ enum AppLauncher {
     } else {
       ws.openApplication(at: appURL, configuration: config, completionHandler: done)
     }
+  }
+
+  /// macOS may ignore a background app's request to bring another app forward (a tap sometimes did nothing until
+  /// the second one), so check that it really came to the front, and ask again for a moment if it didn't.
+  private static func bringForward(_ app: NSRunningApplication, tries: Int = 8) {
+    guard !app.isTerminated, NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier else { return }
+    if #available(macOS 14, *) {
+      // Cooperative activation: only the active app may hand activation on, so become active (the tap was a user
+      // action on this app) and yield to the target.
+      NSApp.activate()
+      NSApp.yieldActivation(to: app)
+      app.activate(from: .current, options: [.activateAllWindows])
+    } else {
+      app.activate(options: [.activateAllWindows])
+    }
+    if AXIsProcessTrusted() {   // with Accessibility, also ask through it (never prompts)
+      AXUIElementSetAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    }
+    guard tries > 1 else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { bringForward(app, tries: tries - 1) }
   }
 
   // MARK: Tiling (Accessibility)

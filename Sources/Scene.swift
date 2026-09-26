@@ -662,9 +662,9 @@ final class Scene {
       b.update(now, dt)
       easeCarry(b, dt)
       if !scripted && !b.busy && b.base == .idle && !interacting { idleHabits(b) }
-      if b.pose == .sleep && !b.busy && now - b.lastZ > 1.8 {
+      if b.pose == .sleep && !b.busy && now - b.lastZ > 3.4 {    // one lazy z at a time
         b.lastZ = now
-        emit(.bitmap(Sprite.zed, Palette.white), at: CGPoint(x: b.x + 9, y: b.who == .clawd ? 11 : 18), vx: 6, vy: 5, life: 2.2, size: 0.75)
+        emit(.bitmap(Sprite.zed, Palette.white), at: CGPoint(x: b.x + 9, y: b.who == .clawd ? 11 : 18), vx: 4, vy: 3.2, life: 3, size: 0.75)
       }
       if b.pose == .work && b.state.ultra && !b.busy {
         ultraAura(b)
