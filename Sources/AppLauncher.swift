@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 
 // Opens each buddy's app on its coding screen and tiles the window: Codex on the left half, Claude on the right.
+// An app that's already open is just brought forward.
 // Tiling uses the Accessibility API, so it only happens once the user has allowed Accessibility.
 enum AppLauncher {
   private struct App {
@@ -35,7 +36,7 @@ enum AppLauncher {
   /// Tapping a sleeping buddy: open its app on the coding screen, then tile it.
   static func open(_ who: Who) { launch(who, withLink: true) }
 
-  /// Long-pressing an awake buddy: bring its app forward as it is (no navigation), then tile it.
+  /// Tapping an awake buddy: bring its app forward as it is (no navigation, and its window stays where you put it).
   static func focus(_ who: Who) { launch(who, withLink: false) }
 
   private static func launch(_ who: Who, withLink: Bool) {
@@ -47,7 +48,7 @@ enum AppLauncher {
     let config = NSWorkspace.OpenConfiguration()
     config.activates = true
     let done: (NSRunningApplication?, Error?) -> Void = { running, _ in
-      guard let running else { return }
+      guard withLink, let running else { return }   // only a freshly opened app gets tiled
       DispatchQueue.main.async { tile(running, leftHalf: who == .codex) }
     }
     // A new coding session only when the app is starting up; if it's already open, just bring its window

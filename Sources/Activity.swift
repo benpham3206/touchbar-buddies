@@ -67,7 +67,11 @@ final class ActivityMonitor {
       ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] n in
         guard let self, let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               let id = app.bundleIdentifier, id == Self.claudeBundle || id == Self.codexBundle else { return }
-        if name == NSWorkspace.didLaunchApplicationNotification { self.runningApps.insert(id) } else { self.runningApps.remove(id) }
+        // Ask again rather than trusting the notification: a helper sharing the app's bundle id (Codex has one), or the
+        // old copy quitting after an update relaunch, would otherwise mark an app that's still open as closed.
+        if NSRunningApplication.runningApplications(withBundleIdentifier: id).contains(where: { !$0.isTerminated }) {
+          self.runningApps.insert(id)
+        } else { self.runningApps.remove(id) }
         self.publish()
       }
     }

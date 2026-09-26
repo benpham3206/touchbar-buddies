@@ -77,7 +77,7 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
 
 - **Tap a sleeping buddy** to open its app on the coding screen. With the optional permission below,
   Codex's window also moves to the left half of the screen and Claude's to the right.
-- **Tap an awake buddy** to say hi. **Long-press** it to bring its app to the front.
+- **Tap an awake buddy** to bring its app to the front, as it is (no new session), and get a hop and a heart.
 - While Claude or Codex is **working**, its buddy types away on a laptop and the other one cheers it on.
   When **both** are working, every so often one gets up and crosses the bar to hand the other part of its work
   in person; when that agent finishes, it travels back to deliver the result.

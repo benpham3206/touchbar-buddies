@@ -108,6 +108,8 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   `codexEntrance()` (runs off behind the brightness button and back in, jump, wave, confetti); a tap on a closed app
   (`launch()`) plays the same, holding its middle (Clawd's ride, Codex peeking from the wings) until the app is up.
   `launchUntil` is time-limited and cleared by any interrupt, and every tap on a closed app asks `onLaunch` again.
+  A tap on a buddy whose app is open brings that app forward (`onFocus` → `AppLauncher.focus`, no new session, no tiling)
+  and plays the usual hop and heart.
   `welcomeBack()` (after an unlock; `welcome` command) has the awake buddies peek in from behind their buttons and
   walk / run in; it runs on the next frame, once the scene clock is current.
 - **Commands:** `Scene.command(name)` is a switch of named triggers (`go { … }` interrupts both buddies

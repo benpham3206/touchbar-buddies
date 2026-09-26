@@ -508,6 +508,7 @@ final class Scene {
     let b = buddy(who)
     guard has(b) else { return }
     guard b.state.appRunning else { launch(b); return }
+    onFocus?(who)                             // its app comes to the front, as it is (no new session)
     b.taps = b.taps.filter { now - $0 < 1.5 } + [now]
     if b.base == .work || launching(b) {
       // Don't break their focus (or their entrance): a little hop and a heart.
