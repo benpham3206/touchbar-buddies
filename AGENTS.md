@@ -99,7 +99,10 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   app is doing (to its laptop with `cWorkIn`, back to sleep with a puff). Timers (`after`) and thrown things started
   during a game belong to it, so `cancelGame()` can call it off cleanly. `direct()` starts a random game from
   `startInteraction()` (a weighted list) every 14–30 s when both buddies are idle, or `support()` when one of them is
-  working. **Play Together** (menu bar, `play` command) starts one right away whatever the states (`play()`: a
+  working. **A game is never cut short by its app:** `arrive` / `fallAsleep` / `startWork` leave a `playing` buddy alone,
+  and `end()` sends it to its laptop or back to sleep once the game is over (yanking Clawd off his cloud mid-ride looked
+  broken). Outside games, state changes queue after the current beat rather than interrupting it.
+  **Play Together** (menu bar, `play` command) starts one right away whatever the states (`play()`: a
   sleeping buddy gets up, a working one closes its laptop); the **Play** submenu lists `Scene.games` by name.
 - **Entrances:** when an app opens, `arrive()` plays `clawdEntrance()` (cloud ride, hop, wave to Codex) or
   `codexEntrance()` (runs off behind the brightness button and back in, jump, wave, confetti); a tap on a closed app
