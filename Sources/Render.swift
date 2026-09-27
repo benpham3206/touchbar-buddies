@@ -191,6 +191,9 @@ enum Renderer {
         s.ultra.toggle()
         if s.ultra { s.working = true; s.appRunning = true; s.present = true }
       }
+    case "usage-demo":
+      scene.usageLevels = .demo
+      scene.showUsageBars = true
     case "slider-volume", "slider-brightness":
       print("note: \(command) only works in the live app (./tbb send \(command))")
     default:

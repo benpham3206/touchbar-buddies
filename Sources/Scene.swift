@@ -155,6 +155,8 @@ final class Scene {
   var bank: Bank                       // swapped by "Rebuild Sprites"
   let clawd = Buddy(.clawd)
   let codex = Buddy(.codex)
+  var usageLevels = UsageLevels()
+  var showUsageBars = true
   let ground: CGFloat = 1
   var now: Double = 0
   var roaming = true
@@ -1485,6 +1487,36 @@ final class Scene {
     for b in order where has(b) { drawBuddy(b, ctx) }
     for p in projectiles { drawProjectile(p, ctx) }
     for p in particles where !p.behind { drawParticle(p, ctx) }
+    if showUsageBars { drawUsageBars(ctx) }
+  }
+
+  private func drawUsageBars(_ ctx: CGContext) {
+    drawUsageBar(usageLevels.codexFiveHour, usageLevels.codexWeekly, in: codex.pocket, color: Palette.codex, ctx)
+    drawUsageBar(usageLevels.claudeFiveHour, usageLevels.claudeWeekly, in: clawd.pocket, color: Palette.clawd, ctx)
+  }
+
+  private func drawUsageBar(_ fiveHour: Double?, _ weekly: Double?, in pocket: CGRect, color: CGColor, _ ctx: CGContext) {
+    let width = min(42, pocket.width - 20)
+    guard width > 0 else { return }
+    let pixelWidth = Int((width * 2).rounded())
+    let left = floor((pocket.midX - CGFloat(pixelWidth) / 4) * 2) / 2
+
+    func row(_ percent: Double?, y: CGFloat, alpha: CGFloat) {
+      guard let percent else { return }
+      ctx.saveGState()
+      ctx.setFillColor(CGColor(gray: 0.72, alpha: alpha * 0.42))
+      ctx.fill(CGRect(x: left, y: y, width: CGFloat(pixelWidth) / 2, height: 0.5))
+      let usedPixels = Int((Double(pixelWidth) * min(100, max(0, percent)) / 100).rounded())
+      if usedPixels > 0 {
+        ctx.setAlpha(alpha)
+        ctx.setFillColor(color)
+        ctx.fill(CGRect(x: left, y: y, width: CGFloat(usedPixels) / 2, height: 0.5))
+      }
+      ctx.restoreGState()
+    }
+
+    row(fiveHour, y: 0.5, alpha: 1)
+    row(weekly, y: 0, alpha: 0.58)
   }
 
   private func drawBuddy(_ b: Buddy, _ ctx: CGContext) {
