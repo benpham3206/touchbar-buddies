@@ -106,7 +106,8 @@ final class ActivityMonitor {
 
     let now = mach_absolute_time()
     for kind in [AgentKind.claude, .codex] {
-      var roots = comm.filter { $0.value == kind.rawValue }.map(\.key)
+      // (Not the `claude -p /usage` this app runs itself for Clawd's usage bars: see ClaudeUsagePoll.)
+      var roots = comm.filter { $0.value == kind.rawValue && !Self.isOurs($0.key, ppid) }.map(\.key)
       if kind == .codex { roots.removeAll { Self.path(of: $0).contains("/.codex/plugins/") } }
       // Skip roots nested inside another root so nothing is counted twice.
       let rootSet = Set(roots)
@@ -191,6 +192,25 @@ final class ActivityMonitor {
     var pids = [pid_t](repeating: 0, count: capacity)
     let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
     return Array(pids.prefix(Int(max(0, count))))
+  }
+
+  /// Started by this app (directly or further down), e.g. ClaudeUsagePoll's `claude`.
+  static func isOurs(_ pid: pid_t, _ ppid: [pid_t: pid_t]? = nil) -> Bool {
+    let me = getpid()
+    var p = pid
+    for _ in 0..<32 {
+      let parent: pid_t
+      if let known = ppid?[p] { parent = known } else {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(p, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
+        parent = pid_t(info.pbi_ppid)
+      }
+      if parent == me { return true }
+      if parent <= 1 { return false }
+      p = parent
+    }
+    return false
   }
 
   private static func path(of pid: pid_t) -> String {
@@ -358,6 +378,7 @@ final class ClaudeUltra: UltraDetector {
             let pid = d["pid"] as? Int, let id = d["sessionId"] as? String, let status = d["status"] as? String else { continue }
       listed = true
       guard status == "busy", kill(pid_t(pid), 0) == 0 || errno == EPERM else { continue }   // stale files outlive crashes
+      guard !ActivityMonitor.isOurs(pid_t(pid)) else { continue }                               // our own usage check
       if let path = transcript(id, cwd: d["cwd"] as? String ?? "") { paths.append(path) }
     }
     return listed ? paths : nil

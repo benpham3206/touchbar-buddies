@@ -35,6 +35,8 @@ final class UsageMonitor {
   private var logs: [String: CodexLog] = [:]
   private var timer: DispatchSourceTimer?
   private var latest = UsageLevels()
+  private var polled: (fiveHour: Double?, weekly: Double?, at: Date)?   // from ClaudeUsagePoll
+  private var lastPoll = Date.distantPast
   private let dayFolder: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "yyyy/MM/dd"
@@ -79,6 +81,10 @@ final class UsageMonitor {
     if logs.count > 100 { logs = logs.filter { paths.contains($0.key) } }
 
     let codex = logs.values.compactMap(\.latest).max { $0.timestamp < $1.timestamp }
+    if now.timeIntervalSince(lastPoll) >= ClaudeUsagePoll.interval {
+      lastPoll = now
+      if let r = ClaudeUsagePoll.run() { polled = (r.fiveHour, r.weekly, now) }
+    }
     let claude = claudeSample(now: now)
     let result = UsageLevels(
       codexFiveHour: codex?.primary.flatMap { $0.resetsAt > now ? $0.percent : nil },
@@ -114,9 +120,10 @@ final class UsageMonitor {
   }
 
   private func claudeSample(now: Date) -> (fiveHour: Double?, weekly: Double?) {
-    // Live numbers from Claude Code's status line, when it's set up (ClaudeStatusLine). Each one holds until its
-    // window resets.
-    if let data = try? Data(contentsOf: ClaudeStatusLine.file),
+    // Live numbers from Claude Code's status line, when it's set up (ClaudeStatusLine) and newer than the last poll.
+    // Each one holds until its window resets.
+    let fileDate = (try? FileManager.default.attributesOfItem(atPath: ClaudeStatusLine.file.path))?[.modificationDate] as? Date
+    if let fileDate, fileDate > (polled?.at ?? .distantPast), let data = try? Data(contentsOf: ClaudeStatusLine.file),
        let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
        let limits = root["rate_limits"] as? [String: Any] {
       func live(_ key: String) -> Double? {
@@ -127,6 +134,8 @@ final class UsageMonitor {
       let result = (live("five_hour"), live("seven_day"))
       if result.0 != nil || result.1 != nil { return result }
     }
+    // Then Claude Code's own answer to /usage, polled every few minutes.
+    if let p = polled, now.timeIntervalSince(p.at) < 15 * 60, p.fiveHour != nil || p.weekly != nil { return (p.fiveHour, p.weekly) }
     // Otherwise the Claude app's own occasional samples.
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: claudeHistory)),
           let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -179,5 +188,54 @@ enum ClaudeStatusLine {
     }
     print([used("five_hour").map { "5h \($0)" }, used("seven_day").map { "wk \($0)" }].compactMap { $0 }.joined(separator: " · "))
     return 0
+  }
+}
+
+/// Asks Claude Code itself for the plan's usage, `claude -p /usage`: a built-in command, so no model call and no cost,
+/// signed in the way Claude Code already is, and nothing saved (--no-session-persistence). This keeps Clawd's bars
+/// current without a terminal session. ActivityMonitor ignores the `claude` it starts (see isOurs).
+enum ClaudeUsagePoll {
+  static let interval: TimeInterval = 5 * 60
+
+  /// The user's Claude Code: the usual install places, then the copy inside the Claude app (newest version).
+  private static var binary: String? {
+    let home = NSHomeDirectory(), fm = FileManager.default
+    var candidates = [home + "/.local/bin/claude", home + "/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+    let bundled = home + "/Library/Application Support/Claude/claude-code"
+    let versions = (try? fm.contentsOfDirectory(atPath: bundled)) ?? []
+    candidates += versions.sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+      .map { "\(bundled)/\($0)/claude.app/Contents/MacOS/claude" }
+    return candidates.first { fm.isExecutableFile(atPath: $0) }
+  }
+
+  /// Blocks for the run (about 2 s; at most 30). Call it off the main thread.
+  static func run() -> (fiveHour: Double?, weekly: Double?)? {
+    guard let path = binary else { return nil }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: path)
+    p.arguments = ["-p", "/usage", "--no-session-persistence", "--output-format", "json"]
+    p.currentDirectoryURL = FileManager.default.temporaryDirectory
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    p.standardInput = FileHandle.nullDevice
+    do { try p.run() } catch { return nil }
+    let timeout = DispatchWorkItem { if p.isRunning { p.terminate() } }
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30, execute: timeout)
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    timeout.cancel()
+    guard p.terminationStatus == 0, let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          json["is_error"] as? Bool != true, let text = json["result"] as? String else { return nil }
+    // "Current session: 65% used · resets …" and "Current week (all models): 10% used · resets …"
+    return (percent(after: "Current session:", in: text), percent(after: "Current week (all models):", in: text))
+  }
+
+  private static func percent(after label: String, in text: String) -> Double? {
+    guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix(label) }) else { return nil }
+    let rest = line.dropFirst(label.count).drop { $0 == " " }
+    guard let value = Double(rest.prefix { $0.isNumber || $0 == "." }), rest.contains("% used"), (0...100).contains(value)
+    else { return nil }
+    return value
   }
 }

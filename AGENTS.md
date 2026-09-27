@@ -123,10 +123,13 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   `AppDelegate.handle`. `./tbb commands` lists both, read straight from the code. Unknown names are ignored.
 - **Usage bars:** `UsageMonitor` samples Codex's recent `token_count` events and Claude's local
   `plan-usage-history.json` every 45 s off the main thread. It uses `RecentLogs` / `LogTail` for Codex's
-  growing rollout files and hides a value once its window resets. For Claude it prefers `claude-usage.json` in
+  growing rollout files and hides a value once its window resets. For Claude, `ClaudeUsagePoll` runs
+  `claude -p /usage --no-session-persistence --output-format json` every 5 minutes (a built-in command: no model call,
+  no cost) and reads "Current session: N% used" / "Current week (all models): N% used"; `ActivityMonitor.isOurs` keeps
+  that `claude` from counting as Claude working. Fresher still is `claude-usage.json` in
   Application Support/TouchBarBuddies, written by `TouchBarBuddies --claude-statusline` (`ClaudeStatusLine`), which
   Claude Code runs as its status line once the user turns it on with `tools/claude-statusline.sh on` (agents don't
-  run that; it edits the user's Claude Code settings). Otherwise the Claude app's `plan-usage-history.json`, which is
+  run that; it edits the user's Claude Code settings). Last resort, the Claude app's `plan-usage-history.json`, which is
   written only now and then, so a sample older than 30 minutes counts as unknown (no bar).
 - **What the app can know:** whether each app (or its CLI) is running, whether its agent is busy (CPU / session
   metadata), and local plan-usage percentages. There's no signal for "tests passed"; the closest is
