@@ -157,7 +157,7 @@ final class Scene {
   let codex = Buddy(.codex)
   var usageLevels = UsageLevels()
   var showUsageBars = true
-  let ground: CGFloat = 1.5            // feet 3 pixels up: room for the two usage lines and a pixel between them
+  let ground: CGFloat = 3              // feet 6 pixels up: room for the two usage lines and the gap between them
   var now: Double = 0
   var roaming = true
   /// Offline renders (Render.swift): no random idle habits or games, so only the commands you ask for play.
@@ -174,6 +174,7 @@ final class Scene {
   ]
 
   private var particles: [Particle] = []
+  private var contentTops: [ObjectIdentifier: CGFloat] = [:]   // see contentTop
   private var projectiles: [Projectile] = []
   private var timers: [(at: Double, game: Int, run: () -> Void)] = []
   private var interacting = false
@@ -1517,8 +1518,8 @@ final class Scene {
     drawUsageBar(usageLevels.claudeFiveHour, usageLevels.claudeWeekly, in: clawd.pocket, color: Palette.clawd, ctx)
   }
 
-  /// Under each buddy, filling left to right with how much of each limit is used: the five-hour one on the third pixel
-  /// row, the weekly one (dimmer) on the bottom row, a pixel apart. Both sit below the buddies' feet (`ground`), so
+  /// Under each buddy, filling left to right with how much of each limit is used: the five-hour one on top, the weekly
+  /// one (dimmer) below, 2 pixels thick each and 2 apart (thinner didn't read on the real bar). Both sit below the buddies' feet (`ground`), so
   /// neither covers any animation. A row turns red from 90% used; an unknown limit has no row.
   private func drawUsageBar(_ fiveHour: Double?, _ weekly: Double?, in pocket: CGRect, color: CGColor, _ ctx: CGContext) {
     let pixels = Int((min(42, pocket.width - 20) * 2).rounded())
@@ -1528,13 +1529,13 @@ final class Scene {
       guard let raw else { return }
       let used = max(0, min(100, raw))
       ctx.setFillColor(CGColor(gray: 0.72, alpha: 0.3))
-      ctx.fill(CGRect(x: x0, y: y, width: CGFloat(pixels) / 2, height: 0.5))
+      ctx.fill(CGRect(x: x0, y: y, width: CGFloat(pixels) / 2, height: 1))
       let filled = used > 0 ? max(1, Int((Double(pixels) * used / 100).rounded())) : 0
       ctx.setFillColor((used >= 90 ? Palette.heart : color).copy(alpha: alpha)!)
-      ctx.fill(CGRect(x: x0, y: y, width: CGFloat(filled) / 2, height: 0.5))
+      ctx.fill(CGRect(x: x0, y: y, width: CGFloat(filled) / 2, height: 1))
     }
-    row(fiveHour, y: 1, alpha: 1)
-    row(weekly, y: 0, alpha: 0.6)
+    row(fiveHour, y: 2, alpha: 1)
+    row(weekly, y: 0, alpha: 0.7)
   }
 
   private func drawBuddy(_ b: Buddy, _ ctx: CGContext) {
@@ -1583,7 +1584,10 @@ final class Scene {
     if now < b.shakeUntil { drawX += Int(now * 20) % 2 == 0 ? -1 : 1 }
     drawUltraGlow(b, ctx)
     if b.who == .clawd && b.state.ultra { clip = bank.violet(clip) }
-    clip.draw(frame, in: ctx, x: drawX, y: ground + b.hop, mirror: mirror, alpha: alpha, squashY: squash)
+    // A frame that would poke out of the top of the bar (Clawd's jump onto his cloud, now that the usage lines raise
+    // everyone) is drawn just low enough to fit: a slightly lower jump instead of a cut-off head.
+    let y = min(ground + b.hop, max(0, 30 - contentTop(clip, frame)))
+    clip.draw(frame, in: ctx, x: drawX, y: y, mirror: mirror, alpha: alpha, squashY: squash)
     b.drawnRect = CGRect(x: drawX - clip.anchorX, y: 0, width: clip.size.width, height: 30)
     if let item = b.carry { draw(item, at: carryPoint(b), size: 1, alpha: 1, flip: false, outline: true, ctx) }
     if b.step?.clipRect != nil && (b.step?.run == true || b.step?.clip != nil) { ctx.restoreGState() }
@@ -1596,6 +1600,17 @@ final class Scene {
       drawGlyph(frames[Int(now / beat) % frames.count], at: CGPoint(x: b.x - 5, y: 22.5),
                 color: b.state.ultra ? Palette.violet : Palette.clawd, size: 9)
     }
+  }
+
+  /// How far above its feet a frame's artwork reaches, in points (measured once per frame image).
+  private func contentTop(_ clip: Clip, _ i: Int) -> CGFloat {
+    let img = clip.frames[min(i, clip.frames.count - 1)]
+    let key = ObjectIdentifier(img)
+    if let top = contentTops[key] { return top }
+    let box = SheetLoader.contentBox(img) ?? .zero
+    let top = (CGFloat(img.height) - box.minY) * clip.size.height / CGFloat(img.height) - clip.baseline
+    contentTops[key] = top
+    return top
   }
 
   /// A soft violet glow behind a buddy in ultra mode: it pulses, flares up as ultra starts and fades out after.
