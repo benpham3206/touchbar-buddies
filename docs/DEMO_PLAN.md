@@ -1,7 +1,8 @@
 # Demo video
 
-**Status:** done. `docs/demo.mp4` (1920×1080, 30 fps, H.264, about 32 s, about 9 MB) and `docs/demo.gif` (960×540,
-15 fps, a 10 s highlight, under 2 MB) are in the README: `[![30-second demo](docs/demo.gif)](docs/demo.mp4)`.
+**Status:** feedback items 1 and 2 are done. `docs/demo.mp4` (1920×1080, 30 fps, H.264 with AAC, about 32 s)
+and `docs/demo.gif` (960×540, 15 fps, a 10 s silent highlight) are in the README:
+`[![30-second demo](docs/demo.gif)](docs/demo.mp4)`.
 
 ```
 tools/demo/render.sh                     # docs/demo.mp4 + docs/demo.gif
@@ -11,11 +12,13 @@ tools/demo/render.sh --fresh             # a new take of the Touch Bar frames (s
 
 ## What's left (user feedback on the first cut)
 
-1. **Sound effects, no voiceover**: taps, pops, typing clicks, whooshes for the trips across the bar, a chime for
-   the high-five and the confetti. The events are already known (`do` cues, `timeline.json` mode changes, things
-   in flight); mix them into an AAC track with AVAssetWriter.
-2. **Fix the laptop's perspective**: the keyboard looks off at that angle. Rework the deck/keyboard mockup
-   (`drawDeck`, `deckPoint`) so the keys, trackpad and Touch Bar sit on one consistent plane.
+1. ~~**Sound effects, no voiceover**~~ **Done.** Swift synthesizes short taps, pops, soft typing clicks, distinct
+   foot/cloud/kart/flight whooshes, a high-five chime, and a sparkle/confetti pop from the storyboard cues,
+   `timeline.json` mode changes, and objects in flight. The stereo mix is panned across the bar, has short
+   envelopes, and is normalized to a −6.4 dBFS peak; it contains no voice or music. AAC is muxed into the MP4,
+   while the ImageIO GIF remains silent.
+2. ~~**Fix the laptop's perspective**~~ **Done.** The deck corners define one projective plane for the keys,
+   trackpad, Touch Bar frame, and Touch ID. The Touch Bar image is mapped to that plane in small affine slices.
 3. The "Maybe later" README visuals at the end of this file.
 
 ## Why it's rendered, not recorded
@@ -53,8 +56,10 @@ tools/demo/render.sh --fresh             # a new take of the Touch Bar frames (s
      cards (github.com/benpham3206/touchbar-buddies);
    - `ramp` stretches (the long runs across the bar) play 4–5× faster with a "▶▶ 5×" badge; all overlays run on
      the video's clock, so text never races.
-4. Export: H.264 through AVAssetWriter (2.6 Mbps, BT.709; built for a macOS 13 target, where its classic API isn't
-   deprecated yet), and the GIF through ImageIO from the `gif` range.
+4. Export: H.264 and AAC through AVAssetWriter when the system encoders are available (2.6 Mbps video, BT.709).
+   On hosts without those encoders, Swift streams frames and synthesized PCM to the installed `ffmpeg` software
+   encoders, then AVAssetWriter muxes the compressed tracks. The GIF is written through ImageIO from the `gif`
+   range and has no audio.
 
 `COMPOSE_DEBUG=1 build/demo/compose build/demo/frames tools/demo/storyboard.txt x` prints the time map and
 the lens cameras, handy when retiming the storyboard.
