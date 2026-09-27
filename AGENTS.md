@@ -38,6 +38,7 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | `Sources/Render.swift` | `--render`: draws the Touch Bar offscreen to a GIF or a PNG filmstrip |
 | `tbb` | Helper for trying changes: `run`, `send`, `render`, `shot`, `logs`, `sprites`, `commands` |
 | `build.sh` | `swiftc` to a universal `build/TouchBarBuddies.app`, signed with the user's "TouchBarBuddies Local" certificate if there is one, ad-hoc otherwise (`--native`: this Mac's CPU only, faster) |
+| `tools/claude-statusline.sh` | Run by the user: `on` / `off` sets Claude Code's status line to `TouchBarBuddies --claude-statusline`, which saves Claude's live usage for Clawd's bar. Agents don't run it |
 | `tools/make-signing-cert.sh` | Run by the user, once: a self-signed code-signing certificate in their login keychain, so the Accessibility permission survives rebuilds. Agents don't run it |
 | `install.sh` / `uninstall.sh` | Build, copy to `~/Applications`, and register the login LaunchAgent / undo all of that. Both take `--dry-run` |
 | `package.sh` | Zips the app for a GitHub Release |
@@ -122,8 +123,11 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   `AppDelegate.handle`. `./tbb commands` lists both, read straight from the code. Unknown names are ignored.
 - **Usage bars:** `UsageMonitor` samples Codex's recent `token_count` events and Claude's local
   `plan-usage-history.json` every 45 s off the main thread. It uses `RecentLogs` / `LogTail` for Codex's
-  growing rollout files and hides a value once its window resets. Claude's file is written only now and then,
-  so a sample older than 30 minutes counts as unknown (no bar).
+  growing rollout files and hides a value once its window resets. For Claude it prefers `claude-usage.json` in
+  Application Support/TouchBarBuddies, written by `TouchBarBuddies --claude-statusline` (`ClaudeStatusLine`), which
+  Claude Code runs as its status line once the user turns it on with `tools/claude-statusline.sh on` (agents don't
+  run that; it edits the user's Claude Code settings). Otherwise the Claude app's `plan-usage-history.json`, which is
+  written only now and then, so a sample older than 30 minutes counts as unknown (no bar).
 - **What the app can know:** whether each app (or its CLI) is running, whether its agent is busy (CPU / session
   metadata), and local plan-usage percentages. There's no signal for "tests passed"; the closest is
   finishing work (`finishWork`).

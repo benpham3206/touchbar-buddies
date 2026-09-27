@@ -85,7 +85,10 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   in person; when that agent finishes, it travels back to deliver the result.
   When the work is done, there's confetti.
 - A thin bar under each buddy (blue for Codex, orange for Clawd) fills up, left to right, with how much of your
-  plan's **5-hour limit** you've **used** (the weekly limit on a plan without a 5-hour one). It turns red from 90%. Claude's only shows while the Claude app has
+  plan's **5-hour limit** you've **used** (the weekly limit on a plan without a 5-hour one). It turns red from 90%.
+  Codex's works by itself. For Clawd's, let Claude Code hand over its live usage once with
+  `zsh tools/claude-statusline.sh on` (it sets Claude Code's status line, which also shows "5h 45% · wk 21%" in the
+  terminal; `off` removes it). Without it, Clawd's bar only shows when the Claude app has saved its usage lately. Claude's only shows while the Claude app has
   recently saved its usage, so it may come and go. **Show Usage Bars** in the menu bar hides them.
 - Every so often they **play together**: catch, paper planes, `{}` and `✻` packets, echo hops,
   peek-a-boo, and visits across the bar by race car, cloud or on foot (Codex sprints, sneaks up on Clawd,

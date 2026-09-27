@@ -38,6 +38,8 @@ run trash "$PLIST"
 run trash "$APP"
 run trash "$CACHE"
 run trash "$LOG"
+# Clawd's usage bar: Claude Code's status line points at the app that's now gone (only if it's ours).
+[[ -f ${0:A:h}/tools/claude-statusline.sh ]] && run zsh "${0:A:h}/tools/claude-statusline.sh" off || true
 
 if (( DRY )); then print "Dry run finished: nothing was changed."; exit 0; fi
 print "Touch Bar Buddies is uninstalled; the app, its login item, sprites and log are in the Trash.

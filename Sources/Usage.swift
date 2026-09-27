@@ -111,6 +111,20 @@ final class UsageMonitor {
   }
 
   private func claudeSample(now: Date) -> (fiveHour: Double?, weekly: Double?) {
+    // Live numbers from Claude Code's status line, when it's set up (ClaudeStatusLine). Each one holds until its
+    // window resets.
+    if let data = try? Data(contentsOf: ClaudeStatusLine.file),
+       let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+       let limits = root["rate_limits"] as? [String: Any] {
+      func live(_ key: String) -> Double? {
+        guard let w = limits[key] as? [String: Any], let reset = number(w["resets_at"]),
+              Date(timeIntervalSince1970: reset) > now else { return nil }
+        return percentage(w["used_percentage"])
+      }
+      let result = (live("five_hour"), live("seven_day"))
+      if result.0 != nil || result.1 != nil { return result }
+    }
+    // Otherwise the Claude app's own occasional samples.
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: claudeHistory)),
           let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
           let samples = root["samples"] as? [Any], let sample = samples.last as? [String: Any],
@@ -138,5 +152,29 @@ final class UsageMonitor {
   private func date(_ value: Any?) -> Date? {
     guard let value = value as? String else { return nil }
     return fractionalDate.date(from: value) ?? plainDate.date(from: value)
+  }
+}
+
+/// `TouchBarBuddies --claude-statusline`: a Claude Code status line command (see tools/claude-statusline.sh).
+/// Claude Code pipes it the session's JSON, which for subscribers carries the plan's live usage (`rate_limits`),
+/// straight from the API. Save that where UsageMonitor reads it, and print a short line for terminal sessions.
+enum ClaudeStatusLine {
+  static var file: URL {
+    URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/TouchBarBuddies/claude-usage.json")
+  }
+
+  static func run() -> Int32 {
+    let input = FileHandle.standardInput.readDataToEndOfFile()
+    guard let json = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any],
+          let limits = json["rate_limits"] as? [String: Any], !limits.isEmpty else { return 0 }
+    if let data = try? JSONSerialization.data(withJSONObject: ["rate_limits": limits]) {
+      try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? data.write(to: file, options: .atomic)
+    }
+    func used(_ key: String) -> String? {
+      ((limits[key] as? [String: Any])?["used_percentage"] as? NSNumber).map { "\(Int($0.doubleValue.rounded()))%" }
+    }
+    print([used("five_hour").map { "5h \($0)" }, used("seven_day").map { "wk \($0)" }].compactMap { $0 }.joined(separator: " · "))
+    return 0
   }
 }

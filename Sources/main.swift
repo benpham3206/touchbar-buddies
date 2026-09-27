@@ -353,6 +353,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
 
 // MARK: - Command line
 
+// `TouchBarBuddies --claude-statusline`: Claude Code's status line command; saves the plan's usage (see Usage.swift).
+if CommandLine.arguments.contains("--claude-statusline") {
+  exit(ClaudeStatusLine.run())
+}
+
 // `TouchBarBuddies --build-sprites`: rebuild the sprite cache headlessly, report, and exit (see AssetCache.swift).
 if CommandLine.arguments.contains("--build-sprites") {
   AssetCache.build(force: true)
