@@ -58,7 +58,7 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
 ### Drawing and animation
 
 - **Coordinates:** points, origin bottom-left, y up. The bar is 1004 × 30 pt (2008 × 60 px, 2 px per pt).
-  `Scene.ground` is 1. Each buddy lives in `buddy.pocket`, about 68 pt wide on the stock layout.
+  `Scene.ground` is 1.5 (the usage lines live below it). Each buddy lives in `buddy.pocket`, about 68 pt wide on the stock layout.
 - **Clip** (`Clip.swift`): frames + per-frame durations + `anchorX` / `baseline` (where the character's
   center and feet are). Variations: `slice(a...b)`, `pick([i, j])`, `still(i, seconds)`, `speed(x)`.
   Clawd's art is 1 art pixel = 1 pt and faces right; he's mirrored automatically when he faces left
@@ -108,8 +108,8 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   broken). Outside games, state changes queue after the current beat rather than interrupting it.
   **Play Together** (menu bar, `play` command) starts one right away whatever the states (`play()`: a
   sleeping buddy gets up, a working one closes its laptop); the **Play** submenu lists `Scene.games` by name.
-  **Show Usage Bars** toggles the usage bar under each buddy (5-hour limit used, filling left to right; weekly on a
-  plan without a 5-hour limit; red from 90%); it is on by default and saved in `UserDefaults`.
+  **Show Usage Bars** toggles the usage bars under each buddy (used, filling left to right: 5-hour on the third pixel
+  row, weekly dimmer on the bottom one, a pixel apart; red from 90%); it is on by default and saved in `UserDefaults`.
 - **Entrances:** when an app opens, `arrive()` plays `clawdEntrance()` (cloud ride, hop, wave to Codex) or
   `codexEntrance()` (runs off behind the brightness button and back in, jump, wave, confetti); a tap on a closed app
   (`launch()`) plays the same, holding its middle (Clawd's ride, Codex peeking from the wings) until the app is up.

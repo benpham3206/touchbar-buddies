@@ -157,7 +157,7 @@ final class Scene {
   let codex = Buddy(.codex)
   var usageLevels = UsageLevels()
   var showUsageBars = true
-  let ground: CGFloat = 1
+  let ground: CGFloat = 1.5            // feet 3 pixels up: room for the two usage lines and a pixel between them
   var now: Double = 0
   var roaming = true
   /// Offline renders (Render.swift): no random idle habits or games, so only the commands you ask for play.
@@ -1517,19 +1517,24 @@ final class Scene {
     drawUsageBar(usageLevels.claudeFiveHour, usageLevels.claudeWeekly, in: clawd.pocket, color: Palette.clawd, ctx)
   }
 
-  /// One bar per buddy: how much of the five-hour limit is used, filling left to right (a plan without a five-hour
-  /// limit shows its weekly one). Red from 90% used. Unknown = no bar.
+  /// Under each buddy, filling left to right with how much of each limit is used: the five-hour one on the third pixel
+  /// row, the weekly one (dimmer) on the bottom row, a pixel apart. Both sit below the buddies' feet (`ground`), so
+  /// neither covers any animation. A row turns red from 90% used; an unknown limit has no row.
   private func drawUsageBar(_ fiveHour: Double?, _ weekly: Double?, in pocket: CGRect, color: CGColor, _ ctx: CGContext) {
-    guard let raw = fiveHour ?? weekly else { return }
-    let used = max(0, min(100, raw))
     let pixels = Int((min(42, pocket.width - 20) * 2).rounded())
     guard pixels > 0 else { return }
     let x0 = floor((pocket.midX - CGFloat(pixels) / 4) * 2) / 2
-    ctx.setFillColor(CGColor(gray: 0.72, alpha: 0.3))
-    ctx.fill(CGRect(x: x0, y: 0, width: CGFloat(pixels) / 2, height: 1))
-    let filled = used > 0 ? max(1, Int((Double(pixels) * used / 100).rounded())) : 0
-    ctx.setFillColor(used >= 90 ? Palette.heart : color)
-    ctx.fill(CGRect(x: x0, y: 0, width: CGFloat(filled) / 2, height: 1))
+    func row(_ raw: Double?, y: CGFloat, alpha: CGFloat) {
+      guard let raw else { return }
+      let used = max(0, min(100, raw))
+      ctx.setFillColor(CGColor(gray: 0.72, alpha: 0.3))
+      ctx.fill(CGRect(x: x0, y: y, width: CGFloat(pixels) / 2, height: 0.5))
+      let filled = used > 0 ? max(1, Int((Double(pixels) * used / 100).rounded())) : 0
+      ctx.setFillColor((used >= 90 ? Palette.heart : color).copy(alpha: alpha)!)
+      ctx.fill(CGRect(x: x0, y: y, width: CGFloat(filled) / 2, height: 0.5))
+    }
+    row(fiveHour, y: 1, alpha: 1)
+    row(weekly, y: 0, alpha: 0.6)
   }
 
   private func drawBuddy(_ b: Buddy, _ ctx: CGContext) {
