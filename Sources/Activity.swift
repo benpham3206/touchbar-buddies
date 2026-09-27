@@ -36,7 +36,6 @@ final class ActivityMonitor {
   private var ultra: [AgentKind: Bool] = [:]
   private var turnOpen: [AgentKind: Bool] = [:]   // the session logs say a turn is in progress
   private let ultraDetectors: [AgentKind: UltraDetector] = [.claude: ClaudeUltra(), .codex: CodexUltra()]
-  private var samples = 0
   private var touchBarServerPID: pid_t = 0
   private let debug = ProcessInfo.processInfo.environment["TBB_DEBUG"] != nil
   private let timebase: (numer: UInt64, denom: UInt64) = {
@@ -140,17 +139,14 @@ final class ActivityMonitor {
         FileHandle.standardError.write(String(format: "[activity] %@ roots=%d cpu=%.3f ema=%.3f busy=%@\n", kind.rawValue, roots.count, fraction, ema, busy[kind]! ? "Y" : "n").data(using: .utf8)!)
       }
     }
-    // Session logs, every other second (only the new bytes): is a turn in progress, and is it ultra?
+    // Session logs, every sample (only the new bytes): is a turn in progress, and is it ultra?
     // A model thinking hard uses almost no local CPU, so an open turn counts as working too.
-    samples += 1
-    if samples % 1 == 0 {
-      for kind in [AgentKind.claude, .codex] {
-        let detector = ultraDetectors[kind]!
-        let isUltra = detector.check()
-        turnOpen[kind] = detector.active
-        ultra[kind] = isUltra
-        if debug { FileHandle.standardError.write("[logs] \(detector.report) active=\(detector.active)\n".data(using: .utf8)!) }
-      }
+    for kind in [AgentKind.claude, .codex] {
+      let detector = ultraDetectors[kind]!
+      let isUltra = detector.check()
+      turnOpen[kind] = detector.active
+      ultra[kind] = isUltra
+      if debug { FileHandle.standardError.write("[logs] \(detector.report) active=\(detector.active)\n".data(using: .utf8)!) }
     }
     var snapshot: (cli: [AgentKind: Bool], busy: [AgentKind: Bool], ultra: [AgentKind: Bool]) = ([:], [:], [:])
     for kind in [AgentKind.claude, .codex] {
