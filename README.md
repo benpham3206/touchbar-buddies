@@ -68,7 +68,7 @@ app starts, it makes its own copy on your Mac, which takes a few seconds:
 
 - **Clawd** comes from the public animations on claude.ai (the same GIFs the Claude app shows), plus the
   laptop animation inside your Claude app.
-- **Codex** comes from the pet sprite sheet inside your ChatGPT app.
+- **Codex** and the other pet designs come from the sprite sheets inside your ChatGPT app.
 
 The copy stays in `~/Library/Application Support/TouchBarBuddies` and is never shared. Without the
 ChatGPT app, Codex stays hidden. Without the Claude app, Clawd still comes, but he scuttles instead of
@@ -79,6 +79,7 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
 - **Tap a sleeping buddy** to open its app on the coding screen. With the optional permission below,
   Codex's window also moves to the left half of the screen and Claude's to the right.
 - **Tap an awake buddy** to bring its app to the front, as it is (no new session), and get a hop and a heart.
+- Choose a design under **Codex Pet** in the menu bar to switch Codex's pet right away; your choice is remembered.
 - While Claude or Codex is **working**, its buddy types away on a laptop and the other one cheers it on.
   When **both** are working, every so often one gets up and crosses the bar to hand the other part of its work
   in person; when that agent finishes, it travels back to deliver the result.
@@ -90,7 +91,7 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   runs laps and sometimes trips).
 - The **buttons** work like the real ones. Tap brightness or volume for a slider, or press one and slide
   for a quick change. Hold a keyboard-light button to keep changing it.
-- The **Clawd icon in the menu bar** has Play Together (or pick a game under Play), Visits Across the Bar,
+- The **Clawd icon in the menu bar** has Play Together (or pick a game under Play), Codex Pet, Visits Across the Bar,
   Show Usage Bars, "pretend" switches to see the working animations, Open at Login, Refresh Touch Bar,
   Rebuild Sprites and Quit.
 

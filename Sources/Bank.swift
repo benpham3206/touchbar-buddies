@@ -2,10 +2,11 @@ import AppKit
 
 // All animation clips for both buddies, built from the sprite cache (see AssetCache.swift).
 //  • Clawd: Claude's own pixel animations (1 art pixel = 1pt = 2 Touch Bar pixels, perfectly crisp).
-//  • Codex: the official Codex pet sheet (192×208 cells), downscaled to fit the 30pt bar.
+//  • Codex: a compatible pet sheet (192×208 cells), downscaled to fit the 30pt bar.
 // A buddy whose sprites are missing gets blank clips and has…=false, so Scene simply leaves him out.
 final class Bank {
   let hasClawd, hasCodex: Bool
+  let codexPetID: String
   // Clawd
   let cStand, cBlink, cLookL, cLookR, cHappy, cLoaf, cLoafBreath, cSquat: Clip
   let cScuttle, cWave, cWaveLoop, cLurk: Clip
@@ -16,7 +17,7 @@ final class Bank {
   let xIdle, xIdleCalm, xRunR, xRunL, xWave, xJump, xFailed, xWaiting, xWork, xReview, xSleep: Clip
   let xLook: [Clip]
 
-  init(resources: URL) {
+  init(resources: URL, petID: String = CodexPet.defaultID) {
     // MARK: Clawd
     let dir = resources.appendingPathComponent("clawd")
     let manifest = (try? JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("clawd.json")))) as? [String: Any] ?? [:]
@@ -99,8 +100,16 @@ final class Bank {
 
     // MARK: Codex
     let cellW = 192, cellH = 208
-    let sheet = SheetLoader.image(resources.appendingPathComponent("codex/codex.webp"))
-      .flatMap { $0.width >= 8 * cellW && $0.height >= 11 * cellH ? $0 : nil }
+    let choices = [petID, CodexPet.defaultID].reduce(into: [String]()) { ids, id in
+      if CodexPet.find(id) != nil && !ids.contains(id) { ids.append(id) }
+    }
+    let selected = choices.compactMap { id -> (String, CGImage)? in
+      guard let url = CodexPet.sheetURL(id, in: resources), let image = SheetLoader.image(url),
+            image.width == 8 * cellW, image.height == 11 * cellH else { return nil }
+      return (id, image)
+    }.first
+    codexPetID = selected?.0 ?? CodexPet.defaultID
+    let sheet = selected?.1
     hasCodex = sheet != nil
     let k: CGFloat = 22.0 / 170.0                   // standing Codex (170px) → 22pt tall
     let pxW = Int((CGFloat(cellW) * k * 2).rounded()), pxH = Int((CGFloat(cellH) * k * 2).rounded())

@@ -608,6 +608,7 @@ final class Scene {
     case "peek-codex": habit(a) { codexPeek(a) }
     case "tinker-codex": habit(a) { tinker(a) }
     case "tinker-clawd": habit(b) { tinker(b) }
+    case "codex-rows": habit(a) { self.previewCodexRows() }
     case "cheer-visit":   // the idle one visits the busy one
       if a.base != b.base, let w = [a, b].first(where: { $0.base == .work }), other(w).base == .idle {
         cancelGame(); begin([other(w)]); cheerInPerson(other(w), w)
@@ -630,6 +631,13 @@ final class Scene {
     case "ultra": ultraBoost()
     default: break
     }
+  }
+
+  /// Cycles every Codex animation row so alternate pet sheets can be checked in an offscreen render.
+  private func previewCodexRows() -> [Step] {
+    var clips = [bank.xIdle, bank.xRunR, bank.xRunL, bank.xWave, bank.xJump, bank.xFailed, bank.xWaiting, bank.xWork, bank.xReview]
+    clips += (0..<16).map { bank.codexLook(degrees: CGFloat($0) * 22.5) }
+    return clips.map { Step(clip: $0, loop: true, hold: max(0.8, $0.total)) }
   }
 
   /// Play Together (menu bar): a game right now, whatever the two are up to. `command` picks one of `games`;

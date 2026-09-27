@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 //   --seconds <n>                 how long to record (default 8)
 //   --claude <state>              idle | working | asleep: how Clawd starts (default idle)
 //   --codex <state>               the same for Codex
+//   --pet <id>                    Codex pet sheet to use (default codex)
 //   --zoom                        only the two buddy pockets, side by side and magnified
 //   --scale <n>                   pixels per point (default 2 = the real Touch Bar; 4 with --zoom)
 //   --fps <n>                     GIF frame rate: 10, 12, 15, 20 or 30 (default 20)
@@ -26,6 +27,7 @@ enum Renderer {
     var cues: [(at: Double, command: String)] = []
     var claude = AgentState(appRunning: true, present: true)
     var codex = AgentState(appRunning: true, present: true)
+    var petID = CodexPet.defaultID
     var zoom = false
     var scale: Int?
     var fps = 20
@@ -84,6 +86,10 @@ enum Renderer {
       case "--seconds": o.seconds = try number("--seconds")
       case "--claude": o.claude = try state("--claude")
       case "--codex": o.codex = try state("--codex")
+      case "--pet":
+        let id = try value("--pet")
+        guard CodexPet.find(id) != nil else { throw UsageError(description: "unknown Codex pet \"\(id)\"") }
+        o.petID = id
       case "--zoom": o.zoom = true
       case "--scale": o.scale = max(1, Int(try number("--scale")))
       case "--fps":
@@ -104,7 +110,10 @@ enum Renderer {
 
   static func render(_ o: Options) throws {
     Icons.reuseSaved = true   // button glyphs saved by the live app, so this also works in sandboxes (see Icons)
-    let bank = Bank(resources: AssetCache.directory)
+    let bank = Bank(resources: AssetCache.directory, petID: o.petID)
+    guard bank.codexPetID == o.petID else {
+      throw UsageError(description: "Codex pet \"\(o.petID)\" is missing or incompatible in \(AssetCache.directory.path)")
+    }
     guard bank.hasClawd || bank.hasCodex else {
       throw UsageError(description: "no sprites in \(AssetCache.directory.path) — run ./tbb sprites")
     }
@@ -194,6 +203,14 @@ enum Renderer {
     case "usage-demo":
       scene.usageLevels = .demo
       scene.showUsageBars = true
+    case "pet-codex", "pet-bsod", "pet-dewey", "pet-fireball", "pet-hoots", "pet-null-signal", "pet-rocky", "pet-seedy", "pet-stacky":
+      let id = String(command.dropFirst("pet-".count))
+      guard CodexPet.available(in: AssetCache.directory).contains(where: { $0.id == id }) else { return }
+      let states = (scene.clawd.state, scene.codex.state)
+      scene.bank = Bank(resources: AssetCache.directory, petID: id)
+      scene.resetBuddies()
+      scene.setState(scene.clawd, states.0)
+      scene.setState(scene.codex, states.1)
     case "slider-volume", "slider-brightness":
       print("note: \(command) only works in the live app (./tbb send \(command))")
     default:
