@@ -3,6 +3,10 @@
 **Clawd and the Codex pet live in your MacBook Pro's Touch Bar.** They sleep while Claude and Codex are closed.
 They type on tiny laptops while your agents work, and they play catch, throw paper planes and visit each other.
 
+Watch the 30-second demo:
+
+[![30-second demo](docs/demo.gif)](docs/demo.mp4)
+
 ![The whole Touch Bar: the buddies wake up, wave, play catch, and Clawd drives over for a high-five](docs/touchbar.gif)
 
 Up close (Codex's corner on the left, Clawd's on the right):

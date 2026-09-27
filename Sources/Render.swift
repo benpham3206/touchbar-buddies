@@ -5,10 +5,12 @@ import UniformTypeIdentifiers
 // Draws the Touch Bar offscreen with the app's real Scene + StripView code, so you (or an AI agent) can
 // SEE an animation without a Touch Bar. Nothing is shown on the real Touch Bar. `./tbb render` wraps it.
 //
-//   TouchBarBuddies --render <out.gif | out.png> [options]
+//   TouchBarBuddies --render <out.gif | out.png | folder> [options]
 //
 //   A .gif is an animation. A .png is a filmstrip, one row per moment labeled with its time:
-//   the easy way for an AI agent to look at motion in a single image.
+//   the easy way for an AI agent to look at motion in a single image. A path without an extension is a
+//   folder of frames (NNNN.png at --fps, 8 px/pt by default) plus timeline.json with where each buddy is, what
+//   it's doing and what's in the air on every frame, for compositing videos (tools/demo).
 //
 //   --do <command> [--at <sec>]   run a command (see ./tbb commands) at that time (default 0.5 s); repeatable
 //   --seconds <n>                 how long to record (default 8)
@@ -100,8 +102,8 @@ enum Renderer {
       case let flag: throw UsageError(description: "unknown option \(flag)")
       }
     }
-    guard ["gif", "png"].contains(o.out.pathExtension.lowercased()) else {
-      throw UsageError(description: "the output file must end in .gif or .png")
+    guard ["gif", "png", ""].contains(o.out.pathExtension.lowercased()) else {
+      throw UsageError(description: "the output must end in .gif or .png, or be a folder (no extension)")
     }
     return o
   }
@@ -133,12 +135,15 @@ enum Renderer {
     strip.frame = NSRect(x: 0, y: 0, width: 1004, height: 30)
     strip.relayout()
 
-    let scale = o.scale ?? (o.zoom ? 4 : 2)
+    let dump = o.out.pathExtension.isEmpty
+    let scale = o.scale ?? (dump ? 8 : o.zoom ? 4 : 2)
     let gif = o.out.pathExtension.lowercased() == "gif"
+    if dump { try FileManager.default.createDirectory(at: o.out, withIntermediateDirectories: true) }
+    var timeline: [[String: Any]] = []
     // Which simulation steps become images: every GIF frame, each filmstrip row, or (--every 0) just the last one.
     let lastStep = Int((o.seconds / tick).rounded())
     let wantsImage: (Int) -> Bool
-    if gif { wantsImage = { n in n % (60 / o.fps) == 0 && n < lastStep } }
+    if gif || dump { wantsImage = { n in n % (60 / o.fps) == 0 && n < lastStep } }
     else if o.every == 0 { wantsImage = { n in n == lastStep } }
     else { wantsImage = { n in n % max(1, Int((o.every / tick).rounded())) == 0 } }
 
@@ -162,8 +167,23 @@ enum Renderer {
       if n >= 0 && wantsImage(n) {
         var img = snapshot(strip, scale: scale)
         if o.zoom { img = pockets(img, scene, scale: scale) }
-        images.append((t - preroll, img))
+        if dump {
+          // Written as it goes: a long video at 8x would not fit in memory.
+          try writePNG(img, to: o.out.appendingPathComponent(String(format: "%04d.png", timeline.count)))
+          timeline.append(["t": t - preroll, "codex": info(scene.codex), "clawd": info(scene.clawd),
+                           "flying": scene.inFlight.map { [$0.x, $0.y] }])
+        } else {
+          images.append((t - preroll, img))
+        }
       }
+    }
+    if dump {
+      let rect = { (r: CGRect) in [r.minX, r.minY, r.width, r.height] }
+      let json: [String: Any] = ["fps": o.fps, "scale": scale, "width": 1004, "height": 30, "frames": timeline,
+                                 "codexPocket": rect(scene.codex.pocket), "clawdPocket": rect(scene.clawd.pocket)]
+      try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]).write(to: o.out.appendingPathComponent("timeline.json"))
+      print("wrote \(o.out.path) (\(timeline.count) frames + timeline.json)")
+      return
     }
 
     guard !images.isEmpty else { throw UsageError(description: "nothing to draw: make --seconds longer") }
@@ -177,6 +197,11 @@ enum Renderer {
   }
 
   private static func buddy(_ who: Who, _ scene: Scene) -> Buddy { who == .clawd ? scene.clawd : scene.codex }
+
+  /// One buddy on one frame, for timeline.json.
+  private static func info(_ b: Buddy) -> [String: Any] {
+    ["x": b.x, "hop": b.hop, "mode": "\(b.base)", "busy": b.busy, "ultra": b.state.ultra, "left": b.facingLeft]
+  }
 
   /// The same commands `./tbb send` gives the live app (see AppDelegate.handle in main.swift).
   private static func perform(_ command: String, _ scene: Scene) {

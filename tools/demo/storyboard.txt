@@ -1,0 +1,58 @@
+# The README demo (docs/demo.mp4 + docs/demo.gif), one cue per line. Render it with tools/demo/render.sh.
+#
+# Times are the renderer's seconds (both buddies start asleep). `do` lines become `--do <command> --at <t>`
+# for `TouchBarBuddies --render`; everything else is read by tools/demo/compose.swift:
+#   <t> say <codex|clawd> <text> | <seconds>    speech bubble over the buddy's lens
+#   <t> prompt <codex|clawd> <text>             typed into that app's window mockup until its buddy starts work
+#   <t> caption <text> | <seconds>              caption pill
+#   <t> title | <seconds>                       title card on the laptop screen
+#   <t> confetti                                confetti over the laptop screen
+#   <t> end                                     windows close, end card
+#   <t> stop                                    last moment of the video
+#   ramp <from> <to> <speed>                    play that stretch faster, with a "▶▶ 4×" badge (the long runs)
+#   gif <from> <to>                             the GIF highlight, in seconds of the finished video
+# Windows open when a buddy wakes up; they start and finish work when the buddy does (from timeline.json).
+
+0.0  title | 2.0
+
+# Tap to wake: Codex jumps, runs off behind the brightness button and back; Clawd rides in on his cloud.
+1.2  do tap-codex
+2.6  do tap-clawd
+1.6  caption Tap a buddy to open its app | 3.2
+6.2  say clawd ✻ Hi Codex! Let's build something | 1.8
+7.5  say codex >_ A Touch Bar app? I'm in! | 1.6
+7.3  prompt codex Build the Touch Bar strip
+7.5  prompt clawd Animate the buddies
+
+# Both get to work; Codex runs a note over to Clawd in person.
+8.7  do work-codex
+8.9  do work-claude
+9.1  caption They work while your agents work | 2.4
+9.5  do delegate
+ramp 9.9 14.8 5
+16.6 do ultra-claude
+ramp 17.9 22.6 5
+
+# ULTRA: Clawd turns violet and types fast, Codex's symbols radiate in purple.
+23.5 do ultra-codex
+23.4 caption Ultra effort? They go ULTRA too | 2.2
+
+# Clawd is done: he brings the result back, high-five, confetti. (He picks his kart or his cloud at random; the
+# ramps and the cues after this assume the kart. If a render comes out with the cloud, `render.sh --fresh` again.)
+25.6 do ultra-claude
+25.6 do work-claude
+26.0 do deliver
+ramp 27.0 28.9 4
+28.9 caption Done! The result comes back in person | 2.6
+31.0 do ultra-codex
+31.0 do work-codex
+31.0 confetti
+ramp 32.8 34.6 4
+
+# A quick game of catch, then the end card.
+35.6 do toss
+35.7 caption And when you're free, they play | 2.4
+38.8 end
+41.6 stop
+
+gif 8.4 18.4

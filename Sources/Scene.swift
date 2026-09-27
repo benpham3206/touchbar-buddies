@@ -217,6 +217,9 @@ final class Scene {
   /// The pockets plus a margin for sparkles and symbols that spill a little past their edges.
   var redrawAreas: [CGRect] { [codex.pocket, clawd.pocket].map { $0.insetBy(dx: -14, dy: 0) } }
 
+  /// Where the things thrown across the bar are right now (for renders: see Render.swift's timeline.json).
+  var inFlight: [CGPoint] { projectiles.map(position(of:)) }
+
   func layout(codexPocket: CGRect, clawdPocket: CGRect) {
     codex.pocket = codexPocket
     clawd.pocket = clawdPocket

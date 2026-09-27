@@ -2,6 +2,7 @@
 build/
 dist/
 *.zip
+.luna/
 
 # Renders and screenshots made with ./tbb in the repo root (docs/ holds the ones the README uses)
 /*.gif
