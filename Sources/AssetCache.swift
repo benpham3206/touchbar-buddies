@@ -6,8 +6,49 @@ import VideoToolbox
 // Builds the sprite cache from things the user already has, so this repo never ships Anthropic's or OpenAI's art:
 //  • Clawd: the public GIFs on claude.ai (the same files the Claude app shows) + the laptop video inside Claude.app.
 //  • Codex: the pet sprite sheet packed inside the Codex desktop app (ChatGPT.app → app.asar).
-// Layout, exactly as Bank reads it: clawd/<name>.png + clawd/clawd.json, and codex/codex.webp.
+// Layout, exactly as Bank reads it: clawd/<name>.png + clawd/clawd.json, and codex/codex.webp plus codex/pets/.
 // Entry points: `directory`, `prepare()` (at launch), `build(force:)` and `summary()` (for --build-sprites).
+struct CodexPet: Equatable {
+  let id: String
+  let name: String
+
+  static let defaultID = "codex"
+  static let preferenceKey = "CodexPetID"
+  static let sheetWidth = 1536
+  static let sheetHeight = 2288
+  static let all = [
+    CodexPet(id: "codex", name: "Codex"),
+    CodexPet(id: "bsod", name: "BSOD"),
+    CodexPet(id: "dewey", name: "Dewey"),
+    CodexPet(id: "fireball", name: "Fireball"),
+    CodexPet(id: "hoots", name: "Hoots"),
+    CodexPet(id: "null-signal", name: "Null Signal"),
+    CodexPet(id: "rocky", name: "Rocky"),
+    CodexPet(id: "seedy", name: "Seedy"),
+    CodexPet(id: "stacky", name: "Stacky"),
+  ]
+
+  static var savedID: String { UserDefaults.standard.string(forKey: preferenceKey) ?? defaultID }
+  static func find(_ id: String) -> CodexPet? { all.first { $0.id == id } }
+
+  static func sheetURL(_ id: String, in resources: URL) -> URL? {
+    guard find(id) != nil else { return nil }
+    return id == defaultID
+      ? resources.appendingPathComponent("codex/codex.webp")
+      : resources.appendingPathComponent("codex/pets/\(id).webp")
+  }
+
+  static func available(in resources: URL) -> [CodexPet] {
+    all.filter { pet in
+      guard let url = sheetURL(pet.id, in: resources),
+            let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+            let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else { return false }
+      return props[kCGImagePropertyPixelWidth as String] as? Int == sheetWidth
+        && props[kCGImagePropertyPixelHeight as String] as? Int == sheetHeight
+    }
+  }
+}
+
 enum AssetCache {
   /// ~/Library/Application Support/TouchBarBuddies/sprites (TBB_SPRITES_DIR overrides it, for testing).
   static var directory: URL {
@@ -30,13 +71,14 @@ enum AssetCache {
   private static let laptopVideo = "Contents/Resources/ion-dist/images/install-hub/clawd-laptop.mov"
   private static let claudeIDs = ["com.anthropic.claudefordesktop"]
   private static let codexIDs = ["com.openai.codex", "com.openai.chat"]
-  private static let codexSheetSize = (w: 1536, h: 2288)   // 8×11 cells of 192×208
+  private static let codexSheetSize = (w: CodexPet.sheetWidth, h: CodexPet.sheetHeight)   // 8×11 cells of 192×208
 
   // Every Clawd animation lives on the same 55×37-pixel stage, scaled up by a (possibly non-integer) factor.
   private static let stageW = 55, stageH = 37
 
   private static var clawdDir: URL { directory.appendingPathComponent("clawd") }
   private static var codexURL: URL { directory.appendingPathComponent("codex/codex.webp") }
+  private static var codexPetsDir: URL { directory.appendingPathComponent("codex/pets") }
   private static var manifestURL: URL { clawdDir.appendingPathComponent("clawd.json") }
 
   // MARK: Entry points
@@ -49,7 +91,8 @@ enum AssetCache {
 
   private static var isComplete: Bool {
     let m = readManifest()
-    return (gifs.map(\.name) + ["laptop"]).allSatisfy { has($0, m) } && exists(codexURL)
+    return (gifs.map(\.name) + ["laptop"]).allSatisfy { has($0, m) }
+      && exists(codexURL) && exists(codexPetsDir)
   }
 
   /// Builds every missing piece (every piece when `force`). If a source is unavailable
@@ -58,6 +101,7 @@ enum AssetCache {
     let fm = FileManager.default
     try? fm.createDirectory(at: clawdDir, withIntermediateDirectories: true)
     try? fm.createDirectory(at: codexURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? fm.createDirectory(at: codexPetsDir, withIntermediateDirectories: true)
     log("building in \(directory.path)")
     var manifest = readManifest()
     manifest["stage"] = [stageW, stageH]
@@ -88,12 +132,19 @@ enum AssetCache {
       try? json.write(to: manifestURL, options: .atomic)
     }
 
-    if force || !exists(codexURL) {
-      if let sheet = codexSheet(in: apps(codexIDs, fallback: "/Applications/ChatGPT.app")) {
-        try? sheet.data.write(to: codexURL, options: .atomic)
-        log("codex: \(sheet.source)")
+    let codexApps = apps(codexIDs, fallback: "/Applications/ChatGPT.app")
+    let neededPets = Set(CodexPet.all.compactMap { pet -> String? in
+      guard let target = CodexPet.sheetURL(pet.id, in: directory), force || !exists(target) else { return nil }
+      return pet.id
+    })
+    let sheets = codexSheets(petIDs: neededPets, in: codexApps)
+    for pet in CodexPet.all {
+      guard let target = CodexPet.sheetURL(pet.id, in: directory), force || !exists(target) else { continue }
+      if let sheet = sheets[pet.id] {
+        try? sheet.data.write(to: target, options: .atomic)
+        log("Codex pet \(pet.name): \(sheet.source)")
       } else {
-        log("codex: missing — no codex-spritesheet*.webp found in the Codex (ChatGPT) app")
+        log("Codex pet \(pet.name): missing — no compatible \(pet.id)-spritesheet*.webp found")
       }
     }
   }
@@ -109,6 +160,7 @@ enum AssetCache {
         Clawd:  \(clawd)
         Laptop: \(laptop)
         Codex:  \(exists(codexURL) ? "found" : "MISSING (needs the Codex desktop app)")
+        Pets:   \(CodexPet.available(in: directory).map(\.name).joined(separator: ", "))
       """
   }
 
@@ -257,30 +309,40 @@ enum AssetCache {
 
   // MARK: Codex
 
-  /// The Codex pet sheet from an installed Codex app. Today it's webview/assets/codex-spritesheet-v6-….webp inside
-  /// Contents/Resources/app.asar; loose files are searched too. A future version may be renamed (v7…),
-  /// so any codex-spritesheet*.webp with the right pixel size will do, newest first.
-  private static func codexSheet(in apps: [URL]) -> (data: Data, source: String)? {
-    let isSheet = { (name: String) in name.hasPrefix("codex-spritesheet") && name.hasSuffix(".webp") }
+  /// Compatible pet sheets from an installed Codex app; app.asar and loose files use the same names.
+  private static func codexSheets(petIDs: Set<String>, in apps: [URL]) -> [String: (data: Data, source: String)] {
+    guard !petIDs.isEmpty else { return [:] }
+    let petID = { (name: String) in
+      CodexPet.all.first { petIDs.contains($0.id) && name.hasPrefix("\($0.id)-spritesheet") && name.hasSuffix(".webp") }?.id
+    }
+    var sheets: [String: (data: Data, source: String)] = [:]
     for app in apps {
       let resources = app.appendingPathComponent("Contents/Resources")
-      var found: [(name: String, read: () -> Data?)] = []
+      var found: [(petID: String, name: String, read: () -> Data?)] = []
       if let asar = Asar(url: resources.appendingPathComponent("app.asar")) {
-        for e in asar.entries where isSheet(e.name) { found.append((e.name, { asar.read(e) })) }
+        for e in asar.entries where petID(e.name) != nil {
+          found.append((petID(e.name)!, e.name, { asar.read(e) }))
+        }
       }
       let walker = FileManager.default.enumerator(at: resources, includingPropertiesForKeys: nil)
       while let url = walker?.nextObject() as? URL {
-        if isSheet(url.lastPathComponent) { found.append((url.lastPathComponent, { try? Data(contentsOf: url) })) }
+        if let id = petID(url.lastPathComponent) {
+          found.append((id, url.lastPathComponent, { try? Data(contentsOf: url) }))
+        }
       }
-      for c in found.sorted(by: { $0.name.localizedStandardCompare($1.name) == .orderedDescending }) {
+      for c in found.sorted(by: {
+        $0.petID == $1.petID
+          ? $0.name.localizedStandardCompare($1.name) == .orderedDescending
+          : $0.petID < $1.petID
+      }) where sheets[c.petID] == nil {
         guard let data = c.read(), let src = CGImageSourceCreateWithData(data as CFData, nil),
               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [String: Any],
               props[kCGImagePropertyPixelWidth as String] as? Int == codexSheetSize.w,
               props[kCGImagePropertyPixelHeight as String] as? Int == codexSheetSize.h else { continue }
-        return (data, "\(c.name) from \(app.path)")
+        sheets[c.petID] = (data, "\(c.name) from \(app.path)")
       }
     }
-    return nil
+    return sheets
   }
 
   // MARK: Helpers

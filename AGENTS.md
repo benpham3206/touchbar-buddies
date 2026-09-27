@@ -27,8 +27,8 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | `Sources/Clip.swift` | `Clip` (frames, timing, anchor, `draw`) and the image helpers `SheetLoader` / `PixelGrid` |
 | `Sources/PixelArt.swift` | Colors (`Palette`) and the tiny effect bitmaps (`Sprite.heart`, `.star`, `.ball`, `.plane`…) |
 | `Sources/Activity.swift` | `ActivityMonitor` / `AgentState`: is each app open, is its agent busy (CPU of its process tree, or an open turn in its session log), is it in ultra / ultracode (`CodexUltra`, `ClaudeUltra`) |
-| `Sources/AssetCache.swift` | Builds `~/Library/Application Support/TouchBarBuddies/sprites` from claude.ai GIFs, Claude.app and ChatGPT.app |
-| `Sources/Asar.swift` | Reads single files out of an Electron `app.asar` (the Codex sprite sheet lives in one) |
+| `Sources/AssetCache.swift` | Builds `~/Library/Application Support/TouchBarBuddies/sprites` from claude.ai GIFs, Claude.app and ChatGPT.app; Codex sheets are in `codex/codex.webp` and `codex/pets/<id>.webp` |
+| `Sources/Asar.swift` | Reads single files out of an Electron `app.asar` (the Codex pet sheets live in one) |
 | `Sources/AppLauncher.swift` | Opens Claude / ChatGPT on their coding screens and tiles their windows (Accessibility) |
 | `Sources/SystemControls.swift` | What the buttons do: brightness, volume, mute, keyboard light, media keys, Mission Control, sleep, lock |
 | `Sources/SliderPopover.swift` | The brightness/volume slider, drawn like the native one |
@@ -161,7 +161,10 @@ shows a whole errand: Codex hands Clawd work, and Clawd brings the result back w
   from a frame (`SheetLoader.edit`; see how `blink` and `lookL` are made).
 - **A new Clawd GIF:** add `(name, path)` to `AssetCache.gifs` (it must be a real file under
   `https://claude.ai/images/clawd/`), run `./tbb sprites`, then load it in `Bank` with `strip(name, need:)`.
-- **Codex:** `row(r, [ms per frame…])` turns sheet row `r` into a clip. Rows: 0 idle, 1 run right, 2 run
+- **Codex:** `codex/codex.webp` is the default sheet; compatible alternatives are `codex/pets/<id>.webp`.
+  The menu bar's **Codex Pet ▸** submenu switches among cached sheets immediately and remembers the choice.
+  Alternative ids are `bsod`, `dewey`, `fireball`, `hoots`, `null-signal`, `rocky`, `seedy`, and `stacky`.
+  `row(r, [ms per frame…])` turns sheet row `r` into a clip. Rows: 0 idle, 1 run right, 2 run
   left, 3 wave, 4 jump, 5 failed, 6 waiting, 7 working, 8 review, 9–10 look directions.
 - Then use it: `Step(clip: bank.cMyClip)`.
 
@@ -170,6 +173,9 @@ shows a whole errand: Codex hands Clawd work, and Clawd brings the result back w
 - An animation: add a `case "name": …` to `Scene.command(_:)`.
 - Something app-level (menus, the monitor, the slider): add it to `AppDelegate.handle(_:)` in
   `main.swift`, and to `Renderer.perform` in `Render.swift` if renders should understand it too.
+- `pet-<id>` switches Codex's sheet and reloads the buddies; for example, `pet-dewey`.
+  Offscreen renders also accept `--pet <id>` (for example, `--pet dewey`).
+- `codex-rows` cycles idle, both run directions, wave, jump, failed, waiting, working, review, and every look frame.
 - `./tbb commands` picks it up by itself. Try it with `./tbb send name` or `./tbb render … --do name`.
 
 ### Change what a button does or how the bar looks
@@ -189,7 +195,7 @@ Add rows to `Sprite` in `PixelArt.swift` (`#` = filled) and a color to `Palette`
 
 1. **Render it (no Touch Bar needed):** `./tbb render out.png --do <command> --seconds 8`. It builds if
    needed and draws the real `Scene` + `StripView` offscreen, in scripted mode (no random habits or games),
-   with the stock Control Strip layout. A `.png` is a filmstrip, one row every `--every 0.5` s labeled
+   with the stock Control Strip layout. Use `--pet <id>` to pick a Codex sheet. A `.png` is a filmstrip, one row every `--every 0.5` s labeled
    with its time, so open it and look. Useful options: `--zoom` (the two pockets, magnified), `--every 0.2`
    for fast motion, `--scale 1` for long timelines, `--claude working|asleep`, `--codex …`, and several
    `--do x --at t`. Use a `.gif` for a real animation. It prints a note if the buddies were still busy

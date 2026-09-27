@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
       NSLog("Touch Bar Buddies: this Mac has no Touch Bar, so there is nothing to show. Quitting.")
       exit(0)
     }
-    scene = Scene(bank: Bank(resources: AssetCache.prepare()))
+    scene = Scene(bank: Bank(resources: AssetCache.prepare(), petID: CodexPet.savedID))
     scene.onLaunch = { who in AppLauncher.open(who) }
     scene.onFocus = { who in AppLauncher.focus(who) }
     strip = StripView(scene: scene)
@@ -143,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     case "ultra-codex": toggleCodexUltra()
     case "refresh": refreshTouchBar()
     case "rebuild-sprites": rebuildSprites()
+    case "pet-codex", "pet-bsod", "pet-dewey", "pet-fireball", "pet-hoots", "pet-null-signal", "pet-rocky", "pet-seedy", "pet-stacky":
+      chooseCodexPet(String(command.dropFirst("pet-".count)))
     case "slider-volume", "slider-brightness": strip.openPopover(volume: command == "slider-volume")
     default: scene.command(command)
     }
@@ -176,6 +178,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     let play = NSMenuItem(title: "Play", action: nil, keyEquivalent: "")
     play.submenu = games
     menu.addItem(play)
+    let availablePets = CodexPet.available(in: AssetCache.directory)
+    if !availablePets.isEmpty {
+      let pets = NSMenu()
+      for pet in availablePets {
+        let choice = item(pet.name, #selector(selectCodexPet(_:)), on: pet.id == scene.bank.codexPetID)
+        choice.representedObject = pet.id
+        pets.addItem(choice)
+      }
+      let petPicker = NSMenuItem(title: "Codex Pet", action: nil, keyEquivalent: "")
+      petPicker.submenu = pets
+      menu.addItem(petPicker)
+    }
     menu.addItem(item("Visits Across the Bar", #selector(toggleRoaming), on: scene.roaming))
     menu.addItem(item("Pretend Claude Is Working", #selector(toggleClaudeWork), on: monitor.pretendWorking[.claude] == true))
     menu.addItem(item("Pretend Codex Is Working", #selector(toggleCodexWork), on: monitor.pretendWorking[.codex] == true))
@@ -211,6 +225,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
 
   @objc private func playTogether() { scene.playTogether() }
   @objc private func playGame(_ sender: NSMenuItem) { scene.playTogether(Scene.games[sender.tag].command) }
+  @objc private func selectCodexPet(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    chooseCodexPet(id)
+  }
+  private func chooseCodexPet(_ id: String) {
+    guard CodexPet.available(in: AssetCache.directory).contains(where: { $0.id == id }) else { return }
+    UserDefaults.standard.set(id, forKey: CodexPet.preferenceKey)
+    reload(Bank(resources: AssetCache.directory, petID: id))
+  }
   @objc private func toggleRoaming() { scene.roaming.toggle() }
   @objc private func toggleClaudeWork() { monitor.pretendWorking[.claude] = !(monitor.pretendWorking[.claude] ?? false) }
   @objc private func toggleCodexWork() { monitor.pretendWorking[.codex] = !(monitor.pretendWorking[.codex] ?? false) }
@@ -257,7 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     strip.stop()
     strip.start()
     presentBarSoon()
-    reload(Bank(resources: AssetCache.directory))
+    reload(Bank(resources: AssetCache.directory, petID: CodexPet.savedID))
   }
 
   /// Swap in freshly loaded sprites and replay what each app is doing, so the buddies reappear right away.
@@ -274,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     rebuilding = true
     DispatchQueue.global(qos: .userInitiated).async {
       AssetCache.build(force: true)
-      let bank = Bank(resources: AssetCache.directory)
+      let bank = Bank(resources: AssetCache.directory, petID: CodexPet.savedID)
       DispatchQueue.main.async {
         self.rebuilding = false
         self.reload(bank)
