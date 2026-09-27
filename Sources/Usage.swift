@@ -118,9 +118,10 @@ final class UsageMonitor {
     let timestamp = Date(timeIntervalSince1970: milliseconds / 1000)
     let age = now.timeIntervalSince(timestamp)
     guard age >= 0, let usage = sample["u"] as? [String: Any] else { return (nil, nil) }
-    let fiveHour = age < 5 * 3600 ? percentage(usage["fh"]) : nil
-    let weekly = age < 7 * 86400 ? percentage(usage["sd"]) : nil
-    return (fiveHour, weekly)
+    // The Claude app writes this file only now and then (it went a whole day without a sample), and an old
+    // reading can be far off, so only a recent one counts.
+    guard age < 30 * 60 else { return (nil, nil) }
+    return (percentage(usage["fh"]), percentage(usage["sd"]))
   }
 
   private func percentage(_ value: Any?) -> Double? {

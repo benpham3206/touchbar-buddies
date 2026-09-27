@@ -84,8 +84,10 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   When **both** are working, every so often one gets up and crosses the bar to hand the other part of its work
   in person; when that agent finishes, it travels back to deliver the result.
   When the work is done, there's confetti.
-- Thin blue and orange bars below Codex and Clawd show plan usage: the brighter upper row is **five-hour**,
-  and the dimmer lower row is **weekly**. Choose **Show Usage Bars** in the menu bar to hide or show them.
+- A thin bar under each buddy (blue for Codex, orange for Clawd) shows how much of your plan's usage is **left**,
+  like a battery, for whichever limit runs out first (the 5-hour one, or the weekly one late in a busy week, or
+  on a plan without a 5-hour limit). It turns red under 10%. Claude's only shows while the Claude app has
+  recently saved its usage, so it may come and go. **Show Usage Bars** in the menu bar hides them.
 - Every so often they **play together**: catch, paper planes, `{}` and `✻` packets, echo hops,
   peek-a-boo, and visits across the bar by race car, cloud or on foot (Codex sprints, sneaks up on Clawd,
   runs laps and sometimes trips).

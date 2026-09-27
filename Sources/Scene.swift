@@ -1517,28 +1517,19 @@ final class Scene {
     drawUsageBar(usageLevels.claudeFiveHour, usageLevels.claudeWeekly, in: clawd.pocket, color: Palette.clawd, ctx)
   }
 
+  /// One bar per buddy, like a battery: what's left of whichever limit runs out first (usually the five-hour one; a
+  /// plan without it just has the weekly one). Red when under 10% is left. Unknown = no bar.
   private func drawUsageBar(_ fiveHour: Double?, _ weekly: Double?, in pocket: CGRect, color: CGColor, _ ctx: CGContext) {
-    let width = min(42, pocket.width - 20)
-    guard width > 0 else { return }
-    let pixelWidth = Int((width * 2).rounded())
-    let left = floor((pocket.midX - CGFloat(pixelWidth) / 4) * 2) / 2
-
-    func row(_ percent: Double?, y: CGFloat, alpha: CGFloat) {
-      guard let percent else { return }
-      ctx.saveGState()
-      ctx.setFillColor(CGColor(gray: 0.72, alpha: alpha * 0.42))
-      ctx.fill(CGRect(x: left, y: y, width: CGFloat(pixelWidth) / 2, height: 0.5))
-      let usedPixels = Int((Double(pixelWidth) * min(100, max(0, percent)) / 100).rounded())
-      if usedPixels > 0 {
-        ctx.setAlpha(alpha)
-        ctx.setFillColor(color)
-        ctx.fill(CGRect(x: left, y: y, width: CGFloat(usedPixels) / 2, height: 0.5))
-      }
-      ctx.restoreGState()
-    }
-
-    row(fiveHour, y: 0.5, alpha: 1)
-    row(weekly, y: 0, alpha: 0.58)
+    guard let used = [fiveHour, weekly].compactMap({ $0 }).max() else { return }
+    let left = max(0, min(100, 100 - used))
+    let pixels = Int((min(42, pocket.width - 20) * 2).rounded())
+    guard pixels > 0 else { return }
+    let x0 = floor((pocket.midX - CGFloat(pixels) / 4) * 2) / 2
+    ctx.setFillColor(CGColor(gray: 0.72, alpha: 0.3))
+    ctx.fill(CGRect(x: x0, y: 0, width: CGFloat(pixels) / 2, height: 1))
+    let filled = left > 0 ? max(1, Int((Double(pixels) * left / 100).rounded())) : 0
+    ctx.setFillColor(left < 10 ? Palette.heart : color)
+    ctx.fill(CGRect(x: x0, y: 0, width: CGFloat(filled) / 2, height: 1))
   }
 
   private func drawBuddy(_ b: Buddy, _ ctx: CGContext) {

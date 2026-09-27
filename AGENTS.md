@@ -107,8 +107,8 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   broken). Outside games, state changes queue after the current beat rather than interrupting it.
   **Play Together** (menu bar, `play` command) starts one right away whatever the states (`play()`: a
   sleeping buddy gets up, a working one closes its laptop); the **Play** submenu lists `Scene.games` by name.
-  **Show Usage Bars** toggles the brighter five-hour row and dimmer weekly row under each buddy; it is on by
-  default and saved in `UserDefaults`.
+  **Show Usage Bars** toggles the usage bar under each buddy (what's left of the tighter of the 5-hour and weekly
+  limits, red under 10%); it is on by default and saved in `UserDefaults`.
 - **Entrances:** when an app opens, `arrive()` plays `clawdEntrance()` (cloud ride, hop, wave to Codex) or
   `codexEntrance()` (runs off behind the brightness button and back in, jump, wave, confetti); a tap on a closed app
   (`launch()`) plays the same, holding its middle (Clawd's ride, Codex peeking from the wings) until the app is up.
@@ -122,8 +122,8 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   `AppDelegate.handle`. `./tbb commands` lists both, read straight from the code. Unknown names are ignored.
 - **Usage bars:** `UsageMonitor` samples Codex's recent `token_count` events and Claude's local
   `plan-usage-history.json` every 45 s off the main thread. It uses `RecentLogs` / `LogTail` for Codex's
-  growing rollout files, and hides each value after its reset (or after Claude's five-hour / seven-day
-  sample window).
+  growing rollout files and hides a value once its window resets. Claude's file is written only now and then,
+  so a sample older than 30 minutes counts as unknown (no bar).
 - **What the app can know:** whether each app (or its CLI) is running, whether its agent is busy (CPU / session
   metadata), and local plan-usage percentages. There's no signal for "tests passed"; the closest is
   finishing work (`finishWork`).
@@ -184,7 +184,7 @@ shows a whole errand: Codex hands Clawd work, and Clawd brings the result back w
 - An animation: add a `case "name": …` to `Scene.command(_:)`.
 - Something app-level (menus, the monitor, the slider): add it to `AppDelegate.handle(_:)` in
   `main.swift`, and to `Renderer.perform` in `Render.swift` if renders should understand it too.
-- `usage-demo` fills the two Codex bars with 83% / 50% and the Clawd bars with 40% / 12%.
+- `usage-demo` sets Codex to 83% / 50% used (bar: 17% left) and Claude to 40% / 12% (bar: 60% left).
 - `pet-<id>` switches Codex's sheet and reloads the buddies; for example, `pet-dewey`.
   Offscreen renders also accept `--pet <id>` (for example, `--pet dewey`).
 - `codex-rows` cycles idle, both run directions, wave, jump, failed, waiting, working, review, and every look frame.
