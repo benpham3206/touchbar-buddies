@@ -1214,7 +1214,7 @@ final class Scene {
     }
     var steps: [Step] = []
     if a.who == .clawd {
-      let car = Bool.random()
+      let car = scripted || Bool.random()   // renders always take the kart, so a storyboard's timing holds (the demo)
       if a.base == .work { steps.append(Step(clip: bank.cWorkOut)) }       // closes his laptop first
       var there = clawdTrip(to: spot, car: car)
       there[0].onStart = pickUp

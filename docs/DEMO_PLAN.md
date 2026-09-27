@@ -74,10 +74,8 @@ Codex finishes too → a game of catch → end card.
 
 ## Randomness
 
-The app picks some things at random. The one that matters: Clawd's errand vehicle (kart or cloud). The ramps and
-the cues after the delivery assume the kart; if a take comes out with the cloud, run `render.sh --fresh` until it
-doesn't (the vehicle shows in `timeline.json` as Clawd's speed: 250 pt/s for the kart, 170 for the cloud).
-Rebuilding the app also triggers a new take.
+The app picks some things at random. The one that used to matter, Clawd's errand vehicle, is always the kart in
+scripted renders (the ramps and the cues after the delivery assume it). Rebuilding the app triggers a new take.
 
 ## Known issues
 

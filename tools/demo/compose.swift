@@ -1606,7 +1606,7 @@ if args[3] == "--stills" {
 
 let mp4URL = URL(fileURLWithPath: args[3])
 let gifURL = args.count > 4 ? URL(fileURLWithPath: args[4]) : nil
-let gifStep = 2                    // every 2nd frame → 15 fps
+let gifStep = 3                    // every 3rd frame → 10 fps (the whole video stays around 4 MB)
 let gifSize = CGSize(width: 960, height: 540)
 
 func videoSettings() -> [String: Any] {
@@ -1813,9 +1813,8 @@ if let gifURL, !gifFrames.isEmpty {
   let dest = CGImageDestinationCreateWithURL(gifURL as CFURL, UTType.gif.identifier as CFString, gifFrames.count, nil)!
   let gif = kCGImagePropertyGIFDictionary as String
   CGImageDestinationSetProperties(dest, [gif: [kCGImagePropertyGIFLoopCount as String: 0]] as CFDictionary)
-  for (k, img) in gifFrames.enumerated() {
-    // GIF delays are whole centiseconds: alternate 6/7 to average 15 fps.
-    let delay = k % 3 == 1 ? 0.06 : 0.07
+  for img in gifFrames {
+    let delay = 0.1   // 10 fps
     CGImageDestinationAddImage(dest, img, [gif: [kCGImagePropertyGIFDelayTime as String: delay]] as CFDictionary)
   }
   CGImageDestinationFinalize(dest)

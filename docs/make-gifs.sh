@@ -6,6 +6,7 @@ cd "${0:A:h}/.."
 
 story=(
   --claude asleep --codex asleep
+  --do usage-demo --at 0                                 # sample numbers for the usage lines under each buddy
   --do tap-codex --at 0.5 --do tap-clawd --at 1.8        # tap to wake them (in the app, this opens Claude/ChatGPT)
   --do wave --at 5.5
   --do toss --at 7.5                                     # a game of catch

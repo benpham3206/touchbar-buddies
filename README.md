@@ -3,7 +3,7 @@
 **Clawd and the Codex pet live in your MacBook Pro's Touch Bar.** They sleep while Claude and Codex are closed.
 They type on tiny laptops while your agents work, and they play catch, throw paper planes and visit each other.
 
-Watch the 30-second demo:
+Watch the 30-second demo (click it for the video with sound):
 
 [![30-second demo](docs/demo.gif)](docs/demo.mp4)
 
@@ -22,9 +22,10 @@ live in the gaps.
 - Tap a sleeping buddy to open its app, straight on the coding screen.
 - They type while their agent works, celebrate when it's done, and cheer each other on.
 
-The app does not upload your chats. It checks which apps are running and how busy they are, and reads the
-local usage metadata needed for the plan-limit bars. The only thing it downloads is Clawd's animations
-from claude.ai, once.
+The app does not upload your chats. It checks which apps are running and how busy they are, and for the usage
+lines reads Codex's local session logs and asks your Claude Code for its usage every 5 minutes (`claude -p /usage`,
+a built-in command: no model call, nothing saved). The only thing it downloads is Clawd's animations from
+claude.ai, once.
 
 ## What you need
 
@@ -88,13 +89,9 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   When **both** are working, every so often one gets up and crosses the bar to hand the other part of its work
   in person; when that agent finishes, it travels back to deliver the result.
   When the work is done, there's confetti.
-- Two thin lines under each buddy (blue for Codex, orange for Clawd) fill up, left to right, with how much of your
-  plan you've **used**: the **5-hour limit** on top, the **weekly** one (dimmer) just below. Red from 90%.
-  Both work by themselves: Codex's from its session logs, Clawd's by asking Claude Code (`claude -p /usage`, a
-  built-in command that costs nothing and saves no session) every 5 minutes, if the Claude Code CLI is installed.
-  Optional, for up-to-the-reply numbers while you use `claude` in a terminal: `zsh tools/claude-statusline.sh on`
-  (it sets Claude Code's status line, which also shows "5h 45% · wk 21%"; `off` removes it). Claude's only shows while the Claude app has
-  recently saved its usage, so it may come and go. **Show Usage Bars** in the menu bar hides them.
+- Two thin lines under each buddy (blue for Codex, orange for Clawd) show how much of your plan you've used: the
+  **5-hour limit** on top, the **weekly** one below. They turn red from 90%. **Show Usage Bars** in the menu bar
+  hides them.
 - Every so often they **play together**: catch, paper planes, `{}` and `✻` packets, echo hops,
   peek-a-boo, and visits across the bar by race car, cloud or on foot (Codex sprints, sneaks up on Clawd,
   runs laps and sometimes trips).
@@ -106,15 +103,18 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
 
 ### Optional: window tiling and media keys
 
-The **Accessibility** permission lets the app arrange Claude and ChatGPT side by side, and makes the
-⏮ ⏯ ⏭ buttons act exactly like the hardware keys. Choose **Allow Window Tiling & Media Keys…** from the
-menu bar icon, or add TouchBarBuddies under **System Settings > Privacy & Security > Accessibility**.
-The app works fine without it.
+The **Accessibility** permission lets the app put Claude and ChatGPT side by side when a tap opens them, and makes
+the ⏮ ⏯ ⏭ buttons act exactly like the hardware keys. The app works fine without it.
 
-A plain build gets a new signature every time, so after you update or rebuild, macOS forgets that permission
-(remove TouchBarBuddies from the Accessibility list and add it again). To make it stick, run
-`zsh tools/make-signing-cert.sh` once: it adds a self-signed "TouchBarBuddies Local" certificate to your login
-keychain, `build.sh` signs with it from then on, and you allow Accessibility one last time.
+1. Run `zsh tools/make-signing-cert.sh` once. It adds a self-signed "TouchBarBuddies Local" certificate to your
+   login keychain, so every build keeps the same signature and macOS remembers the permission across updates.
+2. Run `./install.sh`. When macOS asks whether `codesign` may use the certificate, enter your Mac password and
+   click **Always Allow** (plain Allow asks again on every build).
+3. Choose **Allow Window Tiling & Media Keys…** from the menu bar icon, or add TouchBarBuddies under
+   **System Settings > Privacy & Security > Accessibility**.
+
+Without step 1, each build has a new signature, so after an update remove TouchBarBuddies from the Accessibility
+list and add it again.
 
 ### Easter eggs
 
