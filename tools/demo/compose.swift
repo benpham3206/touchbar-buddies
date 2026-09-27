@@ -291,8 +291,9 @@ let soundCues: [SoundCue] = {
 let W: CGFloat = 1920, H: CGFloat = 1080
 let lid = CGRect(x: 460, y: 26, width: 1000, height: 574)
 let display = CGRect(x: 478, y: 44, width: 964, height: 532)
-let deckTop: CGFloat = 604, deckTopL: CGFloat = 352, deckTopR: CGFloat = 1568
-let deckBottom: CGFloat = 1130, deckBotL: CGFloat = 96, deckBotR: CGFloat = 1824
+// The deck meets the lid at the hinge, so its back edge is exactly the lid's width; it only widens toward the viewer.
+let deckTop: CGFloat = 604, deckTopL = lid.minX, deckTopR = lid.maxX
+let deckBottom: CGFloat = 1130, deckBotL: CGFloat = 250, deckBotR: CGFloat = 1670
 
 let deckProjection: (a: CGFloat, b: CGFloat, c: CGFloat, d: CGFloat, e: CGFloat, f: CGFloat, g: CGFloat, h: CGFloat) = {
   let p0 = CGPoint(x: deckTopL, y: deckTop), p1 = CGPoint(x: deckTopR, y: deckTop)
@@ -1415,7 +1416,8 @@ func audioFormat() -> CMAudioFormatDescription? {
 
 func audioSampleBuffer(_ pcm: [Int16], start: Int, count: Int,
                        format: CMAudioFormatDescription) -> CMSampleBuffer? {
-  let byteCount = count * MemoryLayout<Int16>.size
+  let bytesPerFrame = 2 * MemoryLayout<Int16>.size     // `start` / `count` are stereo frames: two samples each
+  let byteCount = count * bytesPerFrame
   var block: CMBlockBuffer?
   let blockStatus = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
     blockLength: byteCount, blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
@@ -1423,7 +1425,7 @@ func audioSampleBuffer(_ pcm: [Int16], start: Int, count: Int,
   guard blockStatus == kCMBlockBufferNoErr, let block else { return nil }
   let copyStatus = pcm.withUnsafeBytes { bytes -> OSStatus in
     guard let base = bytes.baseAddress else { return -1 }
-    let source = base.advanced(by: start * MemoryLayout<Int16>.size)
+    let source = base.advanced(by: start * bytesPerFrame)
     return CMBlockBufferReplaceDataBytes(with: source, blockBuffer: block, offsetIntoDestination: 0,
                                          dataLength: byteCount)
   }
