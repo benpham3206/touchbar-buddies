@@ -18,8 +18,9 @@ live in the gaps.
 - Tap a sleeping buddy to open its app, straight on the coding screen.
 - They type while their agent works, celebrate when it's done, and cheer each other on.
 
-The app never reads your chats. It only looks at which apps are running and how busy they are. The only
-thing it ever downloads is Clawd's animations from claude.ai, once.
+The app does not upload your chats. It checks which apps are running and how busy they are, and reads the
+local usage metadata needed for the plan-limit bars. The only thing it downloads is Clawd's animations
+from claude.ai, once.
 
 ## What you need
 
@@ -82,13 +83,16 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   When **both** are working, every so often one gets up and crosses the bar to hand the other part of its work
   in person; when that agent finishes, it travels back to deliver the result.
   When the work is done, there's confetti.
+- Thin blue and orange bars below Codex and Clawd show plan usage: the brighter upper row is **five-hour**,
+  and the dimmer lower row is **weekly**. Choose **Show Usage Bars** in the menu bar to hide or show them.
 - Every so often they **play together**: catch, paper planes, `{}` and `✻` packets, echo hops,
   peek-a-boo, and visits across the bar by race car, cloud or on foot (Codex sprints, sneaks up on Clawd,
   runs laps and sometimes trips).
 - The **buttons** work like the real ones. Tap brightness or volume for a slider, or press one and slide
   for a quick change. Hold a keyboard-light button to keep changing it.
 - The **Clawd icon in the menu bar** has Play Together (or pick a game under Play), Visits Across the Bar,
-  "pretend" switches to see the working animations, Open at Login, Refresh Touch Bar, Rebuild Sprites and Quit.
+  Show Usage Bars, "pretend" switches to see the working animations, Open at Login, Refresh Touch Bar,
+  Rebuild Sprites and Quit.
 
 ### Optional: window tiling and media keys
 

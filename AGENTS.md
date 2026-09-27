@@ -27,6 +27,7 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | `Sources/Clip.swift` | `Clip` (frames, timing, anchor, `draw`) and the image helpers `SheetLoader` / `PixelGrid` |
 | `Sources/PixelArt.swift` | Colors (`Palette`) and the tiny effect bitmaps (`Sprite.heart`, `.star`, `.ball`, `.plane`…) |
 | `Sources/Activity.swift` | `ActivityMonitor` / `AgentState`: is each app open, is its agent busy (CPU of its process tree, or an open turn in its session log), is it in ultra / ultracode (`CodexUltra`, `ClaudeUltra`) |
+| `Sources/Usage.swift` | `UsageMonitor` / `UsageLevels`: reads local plan-limit data on a background queue and hides expired windows |
 | `Sources/AssetCache.swift` | Builds `~/Library/Application Support/TouchBarBuddies/sprites` from claude.ai GIFs, Claude.app and ChatGPT.app |
 | `Sources/Asar.swift` | Reads single files out of an Electron `app.asar` (the Codex sprite sheet lives in one) |
 | `Sources/AppLauncher.swift` | Opens Claude / ChatGPT on their coding screens and tiles their windows (Accessibility) |
@@ -46,6 +47,7 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 
 ```
 ActivityMonitor (every 2 s) ── AgentState (open? busy? ultra?) ──▶ Scene.setState ──▶ arrive / fallAsleep / startWork / finishWork
+UsageMonitor (every 45 s, background) ──▶ UsageLevels ──▶ the two usage bars in Scene
 StripView touches ──▶ Scene.tap / longPress                 (buttons ──▶ StripView.fire ──▶ SystemControls)
 ./tbb send <cmd> ──▶ AppDelegate.handle ──▶ Scene.command
 StripView timer (6–60 fps, from Scene.pace) ──▶ Scene.update(now, dt) ──▶ Buddy.update (runs the Step queue), timers, particles
@@ -105,6 +107,8 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   broken). Outside games, state changes queue after the current beat rather than interrupting it.
   **Play Together** (menu bar, `play` command) starts one right away whatever the states (`play()`: a
   sleeping buddy gets up, a working one closes its laptop); the **Play** submenu lists `Scene.games` by name.
+  **Show Usage Bars** toggles the brighter five-hour row and dimmer weekly row under each buddy; it is on by
+  default and saved in `UserDefaults`.
 - **Entrances:** when an app opens, `arrive()` plays `clawdEntrance()` (cloud ride, hop, wave to Codex) or
   `codexEntrance()` (runs off behind the brightness button and back in, jump, wave, confetti); a tap on a closed app
   (`launch()`) plays the same, holding its middle (Clawd's ride, Codex peeking from the wings) until the app is up.
@@ -116,8 +120,13 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
 - **Commands:** `Scene.command(name)` is a switch of named triggers (`go { … }` interrupts both buddies
   and calls `begin()` for you). App-level ones (`work-claude`, `absent-codex`, `slider-volume`…) are in
   `AppDelegate.handle`. `./tbb commands` lists both, read straight from the code. Unknown names are ignored.
-- **What the app can know:** only whether each app (or its CLI) is running, and whether its agent is
-  busy (CPU). There's no signal for "tests passed"; the closest is finishing work (`finishWork`).
+- **Usage bars:** `UsageMonitor` samples Codex's recent `token_count` events and Claude's local
+  `plan-usage-history.json` every 45 s off the main thread. It uses `RecentLogs` / `LogTail` for Codex's
+  growing rollout files, and hides each value after its reset (or after Claude's five-hour / seven-day
+  sample window).
+- **What the app can know:** whether each app (or its CLI) is running, whether its agent is busy (CPU / session
+  metadata), and local plan-usage percentages. There's no signal for "tests passed"; the closest is
+  finishing work (`finishWork`).
 
 ## Recipes
 
@@ -172,6 +181,7 @@ shows a whole errand: Codex hands Clawd work, and Clawd brings the result back w
 - An animation: add a `case "name": …` to `Scene.command(_:)`.
 - Something app-level (menus, the monitor, the slider): add it to `AppDelegate.handle(_:)` in
   `main.swift`, and to `Renderer.perform` in `Render.swift` if renders should understand it too.
+- `usage-demo` fills the two Codex bars with 83% / 50% and the Clawd bars with 40% / 12%.
 - `./tbb commands` picks it up by itself. Try it with `./tbb send name` or `./tbb render … --do name`.
 
 ### Change what a button does or how the bar looks

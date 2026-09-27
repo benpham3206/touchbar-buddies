@@ -5,6 +5,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NSMenuDelegate {
   static let stripID = NSTouchBarItem.Identifier("dev.touchbarbuddies.strip")
   static let trayID = NSTouchBarItem.Identifier("dev.touchbarbuddies.tray")
+  private static let showUsageBarsKey = "showUsageBars"
   /// The LaunchAgent that starts us at login (install.sh writes the same one).
   static let agentLabel = "dev.touchbarbuddies"
   static var agentURL: URL { home("Library/LaunchAgents/\(agentLabel).plist") }
@@ -15,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   private var scene: Scene!
   private var strip: StripView!
   private let monitor = ActivityMonitor()
+  private let usageMonitor = UsageMonitor()
   private let bar = NSTouchBar()
   private var trayItem: NSCustomTouchBarItem!
   private var statusItem: NSStatusItem!
@@ -27,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
       exit(0)
     }
     scene = Scene(bank: Bank(resources: AssetCache.prepare()))
+    scene.showUsageBars = UserDefaults.standard.object(forKey: Self.showUsageBarsKey) as? Bool ?? true
     scene.onLaunch = { who in AppLauncher.open(who) }
     scene.onFocus = { who in AppLauncher.focus(who) }
     strip = StripView(scene: scene)
@@ -59,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     // macOS drops our bar when the Touch Bar restarts, wakes or unlocks, so show it again then.
     monitor.onTouchBarServerRestart = { [weak self] in self?.presentBarSoon() }
     monitor.start()
+    usageMonitor.onChange = { [weak self] levels in self?.scene.usageLevels = levels }
+    usageMonitor.start()
 
     let ws = NSWorkspace.shared.notificationCenter
     for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
@@ -141,6 +146,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     case "work-codex": toggleCodexWork()
     case "ultra-claude": toggleClaudeUltra()
     case "ultra-codex": toggleCodexUltra()
+    case "usage-demo":
+      scene.usageLevels = .demo
+      scene.showUsageBars = true
     case "refresh": refreshTouchBar()
     case "rebuild-sprites": rebuildSprites()
     case "slider-volume", "slider-brightness": strip.openPopover(volume: command == "slider-volume")
@@ -177,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     play.submenu = games
     menu.addItem(play)
     menu.addItem(item("Visits Across the Bar", #selector(toggleRoaming), on: scene.roaming))
+    menu.addItem(item("Show Usage Bars", #selector(toggleUsageBars), on: scene.showUsageBars))
     menu.addItem(item("Pretend Claude Is Working", #selector(toggleClaudeWork), on: monitor.pretendWorking[.claude] == true))
     menu.addItem(item("Pretend Codex Is Working", #selector(toggleCodexWork), on: monitor.pretendWorking[.codex] == true))
     let ultra = NSMenu()
@@ -212,6 +221,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   @objc private func playTogether() { scene.playTogether() }
   @objc private func playGame(_ sender: NSMenuItem) { scene.playTogether(Scene.games[sender.tag].command) }
   @objc private func toggleRoaming() { scene.roaming.toggle() }
+  @objc private func toggleUsageBars() {
+    scene.showUsageBars.toggle()
+    UserDefaults.standard.set(scene.showUsageBars, forKey: Self.showUsageBarsKey)
+    strip.setNeedsDisplay(strip.bounds)
+  }
   @objc private func toggleClaudeWork() { monitor.pretendWorking[.claude] = !(monitor.pretendWorking[.claude] ?? false) }
   @objc private func toggleCodexWork() { monitor.pretendWorking[.codex] = !(monitor.pretendWorking[.codex] ?? false) }
   @objc private func toggleClaudeUltra() { monitor.pretendUltra[.claude] = !(monitor.pretendUltra[.claude] ?? false) }
