@@ -604,6 +604,8 @@ final class Scene {
     case "stargaze": habit(a) { stargaze(a) }
     case "dance": habit(a) { dance(a) }
     case "peek-codex": habit(a) { codexPeek(a) }
+    case "tinker-codex": habit(a) { tinker(a) }
+    case "tinker-clawd": habit(b) { tinker(b) }
     case "cheer-visit":   // the idle one visits the busy one
       if a.base != b.base, let w = [a, b].first(where: { $0.base == .work }), other(w).base == .idle {
         cancelGame(); begin([other(w)]); cheerInPerson(other(w), w)
@@ -714,6 +716,7 @@ final class Scene {
       case ..<0.67: b.enqueue([Step(clip: bank.cSquat, hold: 0.08), happyHop(b)])
       case ..<0.77: b.enqueue([waveStep(b, toward: codex.x)])
       case ..<0.84: peekaboo()
+      case ..<0.89: b.enqueue(tinker(b))
       default: break
       }
     } else {
@@ -730,6 +733,7 @@ final class Scene {
       case ..<0.69: b.enqueue(stargaze(b))
       case ..<0.77: b.enqueue(dance(b))
       case ..<0.84: b.enqueue(codexPeek(b))
+      case ..<0.89: b.enqueue(tinker(b))
       default: break
       }
     }
@@ -1356,6 +1360,16 @@ final class Scene {
             Step(clip: look, hold: 0.5, clipRect: p)]
       + dash(x, from: peek, to: x.home, clipRect: p)
       + [Step(clip: bank.xJump, onStart: { self.sparkle(at: CGPoint(x: x.x, y: 22)) })]
+  }
+
+  /// Tinkering: now and then an idle buddy opens its laptop and pecks at something for a few seconds on its own.
+  /// Real work looks different: Clawd's ✻ spinner and Codex's code symbols only show while their agent works.
+  private func tinker(_ b: Buddy) -> [Step] {
+    let t = Double.random(in: 4...7)
+    if b.who == .codex { return [Step(clip: bank.xWork.speed(0.5), loop: true, hold: t), Step(clip: bank.xReview)] }
+    let desk = b.pocket.midX - 5   // where he sits to work (see Buddy.home)
+    return [Step(moveTo: desk, speed: 18, run: true), Step(clip: bank.cWorkIn, face: desk + 50),
+            Step(clip: bank.cWorkLoop, loop: true, hold: t), Step(clip: bank.cWorkOut), Step(moveTo: b.home, speed: 18, run: true)]
   }
 
   // MARK: Step builders

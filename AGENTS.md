@@ -139,7 +139,8 @@ Every new animation gets a **command name**, so you can trigger it on demand in 
    are cumulative probabilities: keep them in increasing order.
 2. Put the steps in a small builder, e.g. `private func yawn(_ b: Buddy) -> [Step]`, and add a command:
    `case "yawn": habit(clawd) { yawn(clawd) }`. Codex's `zoomies`, `stargaze`, `dance` and `codexPeek`
-   (`peek-codex`) are examples; a habit must end exactly at `home`.
+   (`peek-codex`) are examples, and `tinker` (`tinker-clawd` / `tinker-codex`) is both buddies' (a few seconds at the
+   laptop with no ✻ spinner or code symbols, so it never reads as real work); a habit must end exactly at `home`.
 3. Check it with `./tbb render /tmp/yawn.png --do yawn`. `--live` also runs the random habits, if you want
    to see it come up by itself.
 
