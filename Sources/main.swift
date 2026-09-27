@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   private var statusItem: NSStatusItem!
   private var signalSources: [DispatchSourceSignal] = []
 
-  func applicationDidFinishLaunching(_ notification: Notification) {
+  func applicationDidFinishLaunching(_: Notification) {
     // Nothing to do on a Mac without a Touch Bar. Exiting cleanly (0) also tells launchd not to restart us.
     guard TouchBarPrivate.hardwarePresent else {
       NSLog("Touch Bar Buddies: this Mac has no Touch Bar, so there is nothing to show. Quitting.")
@@ -85,9 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     strip.start()   // last, so the animation clock starts once launch work is done
   }
 
-  func applicationWillTerminate(_ notification: Notification) { restoreNativeBar() }
+  func applicationWillTerminate(_: Notification) { restoreNativeBar() }
 
-  func touchBar(_ touchBar: NSTouchBar, makeItemForIdentifier identifier: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
+  func touchBar(_: NSTouchBar, makeItemForIdentifier identifier: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
     guard identifier == Self.stripID else { return nil }
     let item = NSCustomTouchBarItem(identifier: identifier)
     item.view = strip

@@ -261,7 +261,7 @@ final class StripView: NSView {
 
   // MARK: Drawing
 
-  override func draw(_ dirtyRect: NSRect) {
+  override func draw(_: NSRect) {
     guard let ctx = NSGraphicsContext.current?.cgContext else { return }
     let started = CACurrentMediaTime()
     defer {
