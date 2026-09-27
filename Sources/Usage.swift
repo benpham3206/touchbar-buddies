@@ -88,6 +88,9 @@ final class UsageMonitor {
     )
     guard result != latest else { return }
     latest = result
+    let show = { (v: Double?) in v.map { "\(Int($0.rounded()))%" } ?? "?" }
+    NSLog("[usage] codex 5h %@ wk %@, claude 5h %@ wk %@", show(result.codexFiveHour), show(result.codexWeekly),
+          show(result.claudeFiveHour), show(result.claudeWeekly))
     DispatchQueue.main.async { [weak self] in self?.onChange?(result) }
   }
 
