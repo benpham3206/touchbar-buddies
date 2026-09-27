@@ -1517,18 +1517,18 @@ final class Scene {
     drawUsageBar(usageLevels.claudeFiveHour, usageLevels.claudeWeekly, in: clawd.pocket, color: Palette.clawd, ctx)
   }
 
-  /// One bar per buddy, like a battery: what's left of whichever limit runs out first (usually the five-hour one; a
-  /// plan without it just has the weekly one). Red when under 10% is left. Unknown = no bar.
+  /// One bar per buddy: how much of the five-hour limit is used, filling left to right (a plan without a five-hour
+  /// limit shows its weekly one). Red from 90% used. Unknown = no bar.
   private func drawUsageBar(_ fiveHour: Double?, _ weekly: Double?, in pocket: CGRect, color: CGColor, _ ctx: CGContext) {
-    guard let used = [fiveHour, weekly].compactMap({ $0 }).max() else { return }
-    let left = max(0, min(100, 100 - used))
+    guard let raw = fiveHour ?? weekly else { return }
+    let used = max(0, min(100, raw))
     let pixels = Int((min(42, pocket.width - 20) * 2).rounded())
     guard pixels > 0 else { return }
     let x0 = floor((pocket.midX - CGFloat(pixels) / 4) * 2) / 2
     ctx.setFillColor(CGColor(gray: 0.72, alpha: 0.3))
     ctx.fill(CGRect(x: x0, y: 0, width: CGFloat(pixels) / 2, height: 1))
-    let filled = left > 0 ? max(1, Int((Double(pixels) * left / 100).rounded())) : 0
-    ctx.setFillColor(left < 10 ? Palette.heart : color)
+    let filled = used > 0 ? max(1, Int((Double(pixels) * used / 100).rounded())) : 0
+    ctx.setFillColor(used >= 90 ? Palette.heart : color)
     ctx.fill(CGRect(x: x0, y: 0, width: CGFloat(filled) / 2, height: 1))
   }
 
