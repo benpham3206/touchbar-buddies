@@ -87,8 +87,9 @@ final class UsageMonitor {
     }
     let claude = claudeSample(now: now)
     let result = UsageLevels(
-      codexFiveHour: codex?.primary.flatMap { $0.resetsAt > now ? $0.percent : nil },
-      codexWeekly: codex?.secondary.flatMap { $0.resetsAt > now ? $0.percent : nil },
+      // Past its reset a window starts over from 0 (Codex logs a fresh reading as soon as it's used again).
+      codexFiveHour: codex?.primary.map { $0.resetsAt > now ? $0.percent : 0 },
+      codexWeekly: codex?.secondary.map { $0.resetsAt > now ? $0.percent : 0 },
       claudeFiveHour: claude.fiveHour,
       claudeWeekly: claude.weekly
     )

@@ -124,7 +124,7 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   `AppDelegate.handle`. `./tbb commands` lists both, read straight from the code. Unknown names are ignored.
 - **Usage bars:** `UsageMonitor` samples Codex's recent `token_count` events and Claude's local
   `plan-usage-history.json` every 45 s off the main thread. It uses `RecentLogs` / `LogTail` for Codex's
-  growing rollout files and hides a value once its window resets. For Claude, `ClaudeUsagePoll` runs
+  growing rollout files; once a window's reset time passes it counts as 0 until Codex logs a new reading. For Claude, `ClaudeUsagePoll` runs
   `claude -p /usage --no-session-persistence --output-format json` every 5 minutes (a built-in command: no model call,
   no cost) and reads "Current session: N% used" / "Current week (all models): N% used"; `ActivityMonitor.isOurs` keeps
   that `claude` from counting as Claude working. Fresher still is `claude-usage.json` in
