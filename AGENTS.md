@@ -36,7 +36,8 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | `Sources/TouchBarPrivate.swift` | The private DFRFoundation / NSTouchBar calls that let an app replace the Control Strip |
 | `Sources/Render.swift` | `--render`: draws the Touch Bar offscreen to a GIF or a PNG filmstrip |
 | `tbb` | Helper for trying changes: `run`, `send`, `render`, `shot`, `logs`, `sprites`, `commands` |
-| `build.sh` | `swiftc` to a universal, ad-hoc-signed `build/TouchBarBuddies.app` (`--native`: this Mac's CPU only, faster) |
+| `build.sh` | `swiftc` to a universal `build/TouchBarBuddies.app`, signed with the user's "TouchBarBuddies Local" certificate if there is one, ad-hoc otherwise (`--native`: this Mac's CPU only, faster) |
+| `tools/make-signing-cert.sh` | Run by the user, once: a self-signed code-signing certificate in their login keychain, so the Accessibility permission survives rebuilds. Agents don't run it |
 | `install.sh` / `uninstall.sh` | Build, copy to `~/Applications`, and register the login LaunchAgent / undo all of that. Both take `--dry-run` |
 | `package.sh` | Zips the app for a GitHub Release |
 | `docs/make-gifs.sh` | Re-renders the README GIFs (`docs/touchbar.gif`, `docs/closeup.gif`) |
@@ -224,7 +225,7 @@ sprite folder.
 | A render shows nothing happening | Typo in the command name (unknown commands are ignored): `./tbb commands` |
 | Clawd scuttles instead of typing on a laptop | Claude.app isn't installed, so there's no laptop video. It's a fallback, not a bug |
 | Build error about an API | It's newer than macOS 12: wrap it in `#available`. The Intel slice builds with `-runtime-compatibility-version none` |
-| Window tiling / media keys stopped after a rebuild | Every ad-hoc build has a new signature: remove TouchBarBuddies under Privacy & Security > Accessibility and add it again |
+| Window tiling / media keys stopped after a rebuild | An ad-hoc build (no "TouchBarBuddies Local" certificate) has a new signature: remove TouchBarBuddies under Privacy & Security > Accessibility and add it again, or have the user run `zsh tools/make-signing-cert.sh` once |
 | Touch Bar shows the normal Control Strip | The app isn't running (`pgrep -x TouchBarBuddies`), or macOS dropped the bar: menu bar icon > Refresh Touch Bar, or `./tbb run` |
 | The Control Strip didn't come back after quitting | `killall ControlStrip` (macOS restarts it) |
 | A game never ends / the buddies stop playing | The interaction didn't call `end()` |

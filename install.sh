@@ -134,8 +134,8 @@ Done! Clawd and Codex now live in your Touch Bar. Tap a sleeping buddy to open i
 
 Optional: to let the buddies tile Claude and ChatGPT side by side and use the media keys, allow
 Accessibility for TouchBarBuddies: menu bar icon > \"Allow Window Tiling & Media Keys…\"
-(or System Settings > Privacy & Security > Accessibility). Each new build has a new signature,
-so after an update, remove TouchBarBuddies from that list and add it again.
+(or System Settings > Privacy & Security > Accessibility). Unless you ran tools/make-signing-cert.sh,
+each build has a new signature: after an update, remove TouchBarBuddies from that list and add it again.
 
 Make it yours: open ${(q-)src} in Claude Code or Codex and ask for a new animation.
 To uninstall: zsh ${(q-)src}/uninstall.sh"

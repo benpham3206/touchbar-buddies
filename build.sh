@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Builds build/TouchBarBuddies.app: one universal binary (Apple Silicon + Intel) for macOS 12 or newer,
-# ad-hoc signed. Overwrites in place; nothing is deleted.
+# signed (see the end). Overwrites in place; nothing is deleted.
 #
 #   ./build.sh            universal (what install.sh and package.sh ship)
 #   ./build.sh --native   this Mac's CPU only: twice as fast, for trying changes (./tbb uses it)
@@ -26,5 +26,13 @@ lipo -create build/TouchBarBuddies-${^ARCHS} -output "$APP/Contents/MacOS/TouchB
 
 cp -f Info.plist "$APP/Contents/Info.plist"
 # No artwork is bundled: the app extracts the sprites from the user's own Claude/ChatGPT apps on first run.
-codesign --force --sign - "$APP" >/dev/null
-echo "built $APP (${(j:+:)ARCHS})"
+# Your own "TouchBarBuddies Local" certificate (tools/make-signing-cert.sh) keeps the signature the same from build
+# to build, so macOS remembers the Accessibility permission; without it, ad-hoc (a new signature every build).
+SIGN_ID="TouchBarBuddies Local"
+if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1 && codesign --force --sign "$SIGN_ID" "$APP" 2>/dev/null; then
+  signed="signed: $SIGN_ID"
+else
+  codesign --force --sign - "$APP" >/dev/null
+  signed="ad-hoc signed"
+fi
+echo "built $APP (${(j:+:)ARCHS}, $signed)"

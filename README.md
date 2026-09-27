@@ -97,8 +97,10 @@ The **Accessibility** permission lets the app arrange Claude and ChatGPT side by
 menu bar icon, or add TouchBarBuddies under **System Settings > Privacy & Security > Accessibility**.
 The app works fine without it.
 
-Every build gets a new signature, so after you update or rebuild, macOS forgets that permission. Remove
-TouchBarBuddies from the Accessibility list and add it again.
+A plain build gets a new signature every time, so after you update or rebuild, macOS forgets that permission
+(remove TouchBarBuddies from the Accessibility list and add it again). To make it stick, run
+`zsh tools/make-signing-cert.sh` once: it adds a self-signed "TouchBarBuddies Local" certificate to your login
+keychain, `build.sh` signs with it from then on, and you allow Accessibility one last time.
 
 ### Easter eggs
 
