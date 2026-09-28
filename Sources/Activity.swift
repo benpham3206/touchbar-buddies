@@ -105,9 +105,13 @@ final class ActivityMonitor {
     }
 
     let now = mach_absolute_time()
+    let claudeSessionPIDs = Self.claudeSessionPIDs(home: (ultraDetectors[.claude] as? ClaudeUltra)?.home)
     for kind in [AgentKind.claude, .codex] {
       // (Not the `claude -p /usage` this app runs itself for Clawd's usage bars: see ClaudeUsagePoll.)
       var roots = comm.filter { $0.value == kind.rawValue && !Self.isOurs($0.key, ppid) }.map(\.key)
+      // A Claude Code session that keeps a status file says itself whether it's busy (ClaudeUltra reads it), so its CPU
+      // doesn't count: a few idle sessions ticking over at ~1% each added up to "working" with nothing running.
+      if kind == .claude { roots.removeAll { claudeSessionPIDs.contains($0) } }
       if kind == .codex { roots.removeAll { Self.path(of: $0).contains("/.codex/plugins/") } }
       // Skip roots nested inside another root so nothing is counted twice.
       let rootSet = Set(roots)
@@ -192,6 +196,12 @@ final class ActivityMonitor {
     var pids = [pid_t](repeating: 0, count: capacity)
     let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
     return Array(pids.prefix(Int(max(0, count))))
+  }
+
+  /// Claude Code processes that keep a status file (~/.claude/sessions/<pid>.json).
+  private static func claudeSessionPIDs(home: String?) -> Set<pid_t> {
+    guard let home, let names = try? FileManager.default.contentsOfDirectory(atPath: home + "/sessions") else { return [] }
+    return Set(names.compactMap { $0.hasSuffix(".json") ? pid_t($0.dropLast(5)) : nil })
   }
 
   /// Started by this app (directly or further down), e.g. ClaudeUsagePoll's `claude`.
@@ -310,7 +320,7 @@ final class CodexUltra: UltraDetector {
 
 /// Claude Code's "ultracode" (see above).
 final class ClaudeUltra: UltraDetector {
-  private let home: String
+  let home: String
   private let finder: RecentLogs
   private var logs: [String: (tail: LogTail, prompt: Bool, session: Bool)] = [:]
   private var transcriptFor: [String: String] = [:]   // session id → transcript path

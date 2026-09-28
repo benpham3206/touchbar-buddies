@@ -84,6 +84,7 @@ final class UsageMonitor {
     if now.timeIntervalSince(lastPoll) >= ClaudeUsagePoll.interval {
       lastPoll = now
       if let r = ClaudeUsagePoll.run() { polled = (r.fiveHour, r.weekly, now) }
+      else if let why = ClaudeUsagePoll.lastFailure { NSLog("[usage] couldn't ask Claude Code for its usage: %@", why) }
     }
     let claude = claudeSample(now: now)
     let result = UsageLevels(
@@ -197,6 +198,7 @@ enum ClaudeStatusLine {
 /// current without a terminal session. ActivityMonitor ignores the `claude` it starts (see isOurs).
 enum ClaudeUsagePoll {
   static let interval: TimeInterval = 5 * 60
+  private(set) static var lastFailure: String?   // why the last run() returned nil (for the log)
 
   /// The user's Claude Code: the usual install places, then the copy inside the Claude app (newest version).
   private static var binary: String? {
@@ -211,7 +213,8 @@ enum ClaudeUsagePoll {
 
   /// Blocks for the run (about 2 s; at most 30). Call it off the main thread.
   static func run() -> (fiveHour: Double?, weekly: Double?)? {
-    guard let path = binary else { return nil }
+    lastFailure = nil
+    guard let path = binary else { lastFailure = "no claude CLI found"; return nil }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: path)
     p.arguments = ["-p", "/usage", "--no-session-persistence", "--output-format", "json"]
@@ -220,14 +223,17 @@ enum ClaudeUsagePoll {
     p.standardOutput = out
     p.standardError = FileHandle.nullDevice
     p.standardInput = FileHandle.nullDevice
-    do { try p.run() } catch { return nil }
+    do { try p.run() } catch { lastFailure = "\(error)"; return nil }
     let timeout = DispatchWorkItem { if p.isRunning { p.terminate() } }
     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30, execute: timeout)
     let data = out.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
     timeout.cancel()
     guard p.terminationStatus == 0, let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-          json["is_error"] as? Bool != true, let text = json["result"] as? String else { return nil }
+          json["is_error"] as? Bool != true, let text = json["result"] as? String else {
+      lastFailure = "exit \(p.terminationStatus): " + String(decoding: data.prefix(200), as: UTF8.self)
+      return nil
+    }
     // "Current session: 65% used · resets …" and "Current week (all models): 10% used · resets …"
     return (percent(after: "Current session:", in: text), percent(after: "Current week (all models):", in: text))
   }

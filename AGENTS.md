@@ -137,6 +137,10 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   was doing for the other one, and brings the next game forward. When the limit resets and its agent is still busy,
   it goes back to work. `usageLevels`' `didSet` re-runs `act`. Try it with `limit-claude` / `limit-codex` (each
   flips that plan between 100% and 0%).
+- **Busy Claude sessions:** Claude Code writes `~/.claude/sessions/<pid>.json` with `status` busy/idle for every
+  running session; `ClaudeUltra.busySessions` reads those, and `ActivityMonitor` ignores the CPU of any `claude`
+  process that has one (idle sessions tick over at ~1% each, and a few of them used to add up to "working"). CPU
+  only counts for Claude Code versions without status files, and for Codex.
 - **What the app can know:** whether each app (or its CLI) is running, whether its agent is busy (CPU / session
   metadata), and local plan-usage percentages. There's no signal for "tests passed"; the closest is
   finishing work (`finishWork`).

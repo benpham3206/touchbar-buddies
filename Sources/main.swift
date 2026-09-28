@@ -376,4 +376,13 @@ let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
+// The login item starts the app. When macOS reopens apps after a restart it would start a second way, without the
+// log (a copy started like that ran for hours with no output), so opt out of that.
+app.disableRelaunchOnLogin()
+// Log to the usual file however the app was started (the LaunchAgent and ./tbb run already point output there).
+if isatty(STDERR_FILENO) == 0 {
+  let log = NSHomeDirectory() + "/Library/Logs/TouchBarBuddies.log"
+  freopen(log, "a", stderr)
+  freopen(log, "a", stdout)
+}
 app.run()
