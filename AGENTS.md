@@ -132,6 +132,11 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   Claude Code runs as its status line once the user turns it on with `tools/claude-statusline.sh on` (agents don't
   run that; it edits the user's Claude Code settings). Last resort, the Claude app's `plan-usage-history.json`, which is
   written only now and then, so a sample older than 30 minutes counts as unknown (no bar).
+- **Out of usage:** when a buddy's 5-hour or weekly limit reaches 100% (`outOfUsage`), `act` treats it as not working
+  whatever its app does (`Buddy.benched`): `outOfWork` closes Clawd's laptop / shows Codex's x_x, drops any work it
+  was doing for the other one, and brings the next game forward. When the limit resets and its agent is still busy,
+  it goes back to work. `usageLevels`' `didSet` re-runs `act`. Try it with `limit-claude` / `limit-codex` (each
+  flips that plan between 100% and 0%).
 - **What the app can know:** whether each app (or its CLI) is running, whether its agent is busy (CPU / session
   metadata), and local plan-usage percentages. There's no signal for "tests passed"; the closest is
   finishing work (`finishWork`).

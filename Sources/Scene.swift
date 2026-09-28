@@ -32,6 +32,7 @@ final class Buddy {
   var state = AgentState()             // what the buddy acts out
   var reported = AgentState()          // what the activity monitor says (state = this + the secret ultra boost)
   var greeted = false                 // has made its first entrance since the app started
+  var benched = false                  // its plan is out of usage: no work until the limit resets (Scene.act)
   var launchUntil: Double = 0          // a tap is opening its app: the entrance plays until then (see Scene.launch)
   var playing = false                  // in a game, whatever its app is doing; Scene.end() sends it back to that
   var carry: Effect? = nil             // something it takes across the bar (a message, a result), held over its head
@@ -155,7 +156,8 @@ final class Scene {
   var bank: Bank                       // swapped by "Rebuild Sprites"
   let clawd = Buddy(.clawd)
   let codex = Buddy(.codex)
-  var usageLevels = UsageLevels()
+  /// The plans' usage. A buddy whose plan is used up puts its work away and plays until the limit resets.
+  var usageLevels = UsageLevels() { didSet { if usageLevels != oldValue { act(clawd); act(codex) } } }
   var showUsageBars = true
   let ground: CGFloat = 3              // feet 6 pixels up: room for the two usage lines and the gap between them
   var now: Double = 0
@@ -252,12 +254,16 @@ final class Scene {
     guard has(b) else { return }
     var s = b.reported
     if now < boostUntil && s.present { s.working = true; s.ultra = true }
+    // Out of usage: whatever its app is doing, there's no work to do until the limit resets.
+    let wasBenched = b.benched
+    b.benched = s.present && outOfUsage(b)
+    if b.benched { s.working = false; s.ultra = false }
     let old = b.state
     b.state = s
     if s.present != old.present {
       if s.present { arrive(b) } else { fallAsleep(b) }
     } else if s.present && s.working != old.working {
-      s.working ? startWork(b) : finishWork(b)
+      if s.working { startWork(b) } else if b.benched && !wasBenched { outOfWork(b) } else { finishWork(b) }
     }
     if s.ultra != old.ultra { s.ultra ? ultraOn(b) : ultraOff(b) }
   }
@@ -379,6 +385,26 @@ final class Scene {
   /// Where the laptop sits while a buddy works (both type to their right).
   private func laptop(_ b: Buddy) -> CGPoint {
     CGPoint(x: b.x + (b.who == .clawd ? 16 : 6), y: ground + (b.who == .clawd ? 4 : 7) + b.hop)
+  }
+
+  /// Its plan's 5-hour or weekly limit is used up (the usage lines).
+  private func outOfUsage(_ b: Buddy) -> Bool {
+    let limits = b.who == .clawd ? [usageLevels.claudeFiveHour, usageLevels.claudeWeekly]
+                                 : [usageLevels.codexFiveHour, usageLevels.codexWeekly]
+    return limits.contains { ($0 ?? 0) >= 100 }
+  }
+
+  /// Out of usage mid-work: Clawd closes his laptop and shrugs, Codex goes x_x; then, nothing to do, off to play.
+  /// (No confetti: nothing got finished. Any work it was doing for the other one is dropped too.)
+  private func outOfWork(_ b: Buddy) {
+    delegatedBy[b.who] = nil
+    if b.who == .clawd {
+      b.enqueue((b.playing ? [] : [Step(clip: bank.cWorkOut)])
+                + [Step(clip: bank.cLookL, hold: 0.5), Step(clip: bank.cLookR, hold: 0.5), happyHop(b)])
+    } else {
+      b.enqueue([Step(clip: bank.xFailed), Step(clip: bank.xJump)])
+    }
+    if !interacting { nextInteraction = min(nextInteraction, now + .random(in: 3...6)) }
   }
 
   private func finishWork(_ b: Buddy) {
@@ -633,6 +659,10 @@ final class Scene {
     case "launch-codex": launch(codex, open: false)
     case "notes": notes()
     case "ultra": ultraBoost()
+    case "limit-claude":   // pretend Claude's plan ran out (again: it reset)
+      usageLevels.claudeFiveHour = (usageLevels.claudeFiveHour ?? 0) >= 100 ? 0 : 100
+    case "limit-codex":
+      usageLevels.codexFiveHour = (usageLevels.codexFiveHour ?? 0) >= 100 ? 0 : 100
     default: break
     }
   }

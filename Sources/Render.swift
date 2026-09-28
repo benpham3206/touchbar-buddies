@@ -127,6 +127,8 @@ enum Renderer {
     }
     scene.clawd.state = o.claude
     scene.codex.state = o.codex
+    scene.clawd.reported = o.claude   // what "the monitor" says, for anything that re-acts on it (usage, the boost)
+    scene.codex.reported = o.codex
     scene.clawd.lastZ = 0.9   // so the two snorers' Zzz don't rise in step
 
     let strip = StripView(scene: scene)
@@ -207,7 +209,7 @@ enum Renderer {
   private static func perform(_ command: String, _ scene: Scene) {
     let awake = AgentState(appRunning: true, present: true)
     func toggle(_ b: Buddy, _ change: (inout AgentState) -> Void) {
-      var s = b.state
+      var s = b.reported   // what "the app" says, not what the buddy acts out (a benched one isn't working)
       change(&s)
       scene.setState(b, s)
     }

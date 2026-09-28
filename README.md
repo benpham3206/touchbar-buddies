@@ -91,7 +91,7 @@ typing on a laptop. If you install an app later, choose **Rebuild Sprites** from
   When the work is done, there's confetti.
 - Two thin lines under each buddy (blue for Codex, orange for Clawd) show how much of your plan you've used: the
   **5-hour limit** on top, the **weekly** one below. They turn red from 90%. **Show Usage Bars** in the menu bar
-  hides them.
+  hides them. Out of usage, a buddy puts its laptop away and goes off to play until the limit resets.
 - Every so often they **play together**: catch, paper planes, `{}` and `✻` packets, echo hops,
   peek-a-boo, and visits across the bar by race car, cloud or on foot (Codex sprints, sneaks up on Clawd,
   runs laps and sometimes trips).
