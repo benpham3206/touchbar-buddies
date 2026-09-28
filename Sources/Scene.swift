@@ -33,6 +33,7 @@ final class Buddy {
   var reported = AgentState()          // what the activity monitor says (state = this + the secret ultra boost)
   var greeted = false                 // has made its first entrance since the app started
   var benched = false                  // its plan is out of usage: no work until the limit resets (Scene.act)
+  var cooking = false                  // Clawd works at his stove this session instead of his laptop (Scene.workIn)
   var launchUntil: Double = 0          // a tap is opening its app: the entrance plays until then (see Scene.launch)
   var playing = false                  // in a game, whatever its app is doing; Scene.end() sends it back to that
   var carry: Effect? = nil             // something it takes across the bar (a message, a result), held over its head
@@ -186,6 +187,7 @@ final class Scene {
   private var laidOut = false
   private var boostUntil: Double = 0             // the secret two-buddy hold: both work in ultra mode until then
   private var welcomeDue = false                 // welcomeBack() was called: play it on the next frame
+  private var cookNext = false                   // `cook` command: the next work session is a cooking one
   // Errands between two busy buddies (see delegate()).
   private var nextSender: Who = .codex           // they take turns handing work over
   private var delegatedBy: [Who: Who] = [:]      // who handed work to whom: receiver → sender
@@ -315,7 +317,12 @@ final class Scene {
     // whatever it's doing plays out first. In a game, end() sits it back down at its laptop.
     if !b.playing {
       b.enqueue([Step(moveTo: b.home, speed: 40, run: true)])
-      if b.who == .clawd { b.enqueue([Step(clip: bank.cWorkIn, face: b.home + 50)]) }
+      if b.who == .clawd {
+        // Now and then he cooks instead of typing (when Claude Code has the art: see ClawdSVG).
+        b.cooking = bank.cCook != nil && (cookNext || Double.random(in: 0...1) < 0.35)
+        cookNext = false
+        b.enqueue(workIn(b))
+      }
       else { b.enqueue([Step(clip: bank.xJump)]) }
     }
     // Both at their laptops now: the first errand shouldn't take long.
@@ -399,7 +406,7 @@ final class Scene {
   private func outOfWork(_ b: Buddy) {
     delegatedBy[b.who] = nil
     if b.who == .clawd {
-      b.enqueue((b.playing ? [] : [Step(clip: bank.cWorkOut)])
+      b.enqueue((b.playing ? [] : workOut(b))
                 + [Step(clip: bank.cLookL, hold: 0.5), Step(clip: bank.cLookR, hold: 0.5), happyHop(b)])
     } else {
       b.enqueue([Step(clip: bank.xFailed), Step(clip: bank.xJump)])
@@ -410,7 +417,7 @@ final class Scene {
   private func finishWork(_ b: Buddy) {
     if b.who == .clawd {
       // (Away from his laptop in a game or on an errand, there's no laptop to close.)
-      b.enqueue((b.playing ? [] : [Step(clip: bank.cWorkOut)]) + [happyHop(b), happyHop(b)])
+      b.enqueue((b.playing ? [] : workOut(b)) + [happyHop(b), happyHop(b)])
     } else {
       b.enqueue([Step(clip: bank.xReview), Step(clip: bank.xReview)])
     }
@@ -637,6 +644,10 @@ final class Scene {
     case "dance": habit(a) { dance(a) }
     case "peek-codex": habit(a) { codexPeek(a) }
     case "tinker-codex": habit(a) { tinker(a) }
+    case "cook":   // Clawd's next work session is a cooking one (and a taste of it now)
+      cookNext = true
+      if let cook = bank.cCook { habit(b) { [Step(clip: cook, loop: true, hold: cook.total * 2, face: b.x + 1)] } }
+    case "show-off": habit(b) { showOff(b) }
     case "tinker-clawd": habit(b) { tinker(b) }
     case "codex-rows": habit(a) { self.previewCodexRows() }
     case "cheer-visit":   // the idle one visits the busy one
@@ -761,6 +772,7 @@ final class Scene {
       case ..<0.77: b.enqueue([waveStep(b, toward: codex.x)])
       case ..<0.84: peekaboo()
       case ..<0.89: b.enqueue(tinker(b))
+      case ..<0.93: b.enqueue(showOff(b))
       default: break
       }
     } else {
@@ -849,6 +861,7 @@ final class Scene {
     guard b.who == .clawd, let f = b.step?.clip?.frames.first else { return false }
     return [bank.cRaceIn, bank.cRaceDrive, bank.cRaceOut, bank.cCloudMount, bank.cCloudRide, bank.cCloudDismount,
             bank.cWorkIn, bank.cWorkOut].contains { $0.frames.contains { $0 === f } }
+      || bank.cCook?.frames.contains { $0 === f } == true
   }
 
   /// After a game: back to the laptop, or back to sleep.
@@ -856,7 +869,7 @@ final class Scene {
     switch b.base {
     case .idle: return [Step(moveTo: b.home, speed: 18, run: true)]    // (a game may have left it off-center)
     case .work:
-      return [Step(moveTo: b.home, speed: 40, run: true)] + (b.who == .clawd ? [Step(clip: bank.cWorkIn, face: b.home + 50)] : [])
+      return [Step(moveTo: b.home, speed: 40, run: true)] + (b.who == .clawd ? workIn(b) : [])
     case .sleep:
       return [Step(moveTo: b.home, speed: 40, run: true, onEnd: { self.puff(at: CGPoint(x: b.x, y: self.ground + 6), color: Palette.white) })]
     }
@@ -876,7 +889,7 @@ final class Scene {
         puff(at: CGPoint(x: b.x, y: ground + 8), color: Palette.white)
         steps = b.who == .clawd ? [Step(clip: bank.cSquat, hold: 0.08), happyHop(b)] : [Step(clip: bank.xJump)]
       } else if b.base == .work && b.who == .clawd {
-        steps = [Step(clip: bank.cWorkOut)]    // closes his laptop
+        steps = workOut(b)                     // closes his laptop (or turns off the stove)
       }
       b.enqueue(steps)
       warmUp = max(warmUp, steps.reduce(0) { $0 + ($1.hold > 0 ? $1.hold : $1.clip?.total ?? 0) })
@@ -1245,7 +1258,7 @@ final class Scene {
     var steps: [Step] = []
     if a.who == .clawd {
       let car = scripted || Bool.random()   // renders always take the kart, so a storyboard's timing holds (the demo)
-      if a.base == .work { steps.append(Step(clip: bank.cWorkOut)) }       // closes his laptop first
+      if a.base == .work { steps += workOut(a) }                           // closes his laptop first
       var there = clawdTrip(to: spot, car: car)
       there[0].onStart = pickUp
       steps += there
@@ -1404,6 +1417,29 @@ final class Scene {
             Step(clip: look, hold: 0.5, clipRect: p)]
       + dash(x, from: peek, to: x.home, clipRect: p)
       + [Step(clip: bank.xJump, onStart: { self.sparkle(at: CGPoint(x: x.x, y: 22)) })]
+  }
+
+  /// Clawd sitting down to work: opening his laptop, or, in a cooking session, the stove lighting up with a puff.
+  private func workIn(_ b: Buddy) -> [Step] {
+    guard b.who == .clawd else { return [] }
+    guard b.cooking, let cook = bank.cCook else { return [Step(clip: bank.cWorkIn, face: b.home + 50)] }
+    return [Step(clip: cook.still(0, 0.3), face: b.home + 50, onStart: { self.puff(at: self.stove(b), color: Palette.white) })]
+  }
+
+  /// …and getting up again: the laptop closes, or the pot vanishes in a puff of steam.
+  private func workOut(_ b: Buddy) -> [Step] {
+    guard b.who == .clawd else { return [] }
+    guard b.cooking, let cook = bank.cCook else { return [Step(clip: bank.cWorkOut)] }
+    return [Step(clip: cook.still(0, 0.25), onEnd: { self.puff(at: self.stove(b), color: Palette.white); b.cooking = false })]
+  }
+
+  /// Where the pot sits in the cooking scene: a little right of Clawd.
+  private func stove(_ b: Buddy) -> CGPoint { CGPoint(x: b.x + 21, y: ground + 8) }
+
+  /// Any other Clawd animation Claude Code ships (bank.cExtras), shown off now and then: a couple of loops, in place.
+  private func showOff(_ b: Buddy) -> [Step] {
+    guard let clip = bank.cExtras.filter({ $0.size.width < b.pocket.width }).randomElement() else { return [] }
+    return [Step(clip: clip, loop: true, hold: clip.total * 2, face: b.x + 1)]
   }
 
   /// Tinkering: now and then an idle buddy opens its laptop and pecks at something for a few seconds on its own.
@@ -1606,7 +1642,7 @@ final class Scene {
       case .work:
         // Codex's working row changes his face every frame, so it runs at half speed normally (calm typing);
         // ultra speeds it up (2× that for Codex, 3× for Clawd).
-        clip = b.who == .clawd ? bank.cWorkLoop : bank.xWork.speed(0.5)
+        clip = b.who == .clawd ? (b.cooking ? bank.cCook ?? bank.cWorkLoop : bank.cWorkLoop) : bank.xWork.speed(0.5)
         if b.state.ultra { clip = clip.speed(b.who == .clawd ? 3 : 2) }   // typing like mad
         frame = clip.index(at: now, loop: true)
       case .idle:

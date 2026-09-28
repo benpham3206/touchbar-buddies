@@ -83,6 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     listenForCommands()
     setUpStatusItem()
     strip.start()   // last, so the animation clock starts once launch work is done
+    // New Clawd art ships inside Claude Code updates (ClawdSVG): look now, then every few hours.
+    checkForNewClawdArt()
+    Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in self?.checkForNewClawdArt() }
   }
 
   func applicationWillTerminate(_: Notification) { restoreNativeBar() }
@@ -287,6 +290,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
   // MARK: Sprites (AssetCache.swift)
 
   private var rebuilding = false
+
+  /// Scans the newest Claude Code for Clawd animations once per version (off the main thread; it's a big binary),
+  /// and swaps in the new sprites if it found any.
+  private func checkForNewClawdArt() {
+    DispatchQueue.global(qos: .utility).async {
+      guard AssetCache.refreshClawdSVGs() else { return }
+      let bank = Bank(resources: AssetCache.directory, petID: CodexPet.savedID)
+      DispatchQueue.main.async { if !self.rebuilding { self.reload(bank) } }
+    }
+  }
 
   /// Re-extracts every sprite in the background, then swaps the new art in.
   /// Everything short of relaunching: show the bar again, restart the animation, reload the sprites from the cache.

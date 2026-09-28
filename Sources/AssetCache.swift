@@ -132,6 +132,8 @@ enum AssetCache {
       try? json.write(to: manifestURL, options: .atomic)
     }
 
+    refreshClawdSVGs(force: force)
+
     let codexApps = apps(codexIDs, fallback: "/Applications/ChatGPT.app")
     let neededPets = Set(CodexPet.all.compactMap { pet -> String? in
       guard let target = CodexPet.sheetURL(pet.id, in: directory), force || !exists(target) else { return nil }
@@ -147,6 +149,39 @@ enum AssetCache {
         log("Codex pet \(pet.name): missing — no compatible \(pet.id)-spritesheet*.webp found")
       }
     }
+  }
+
+  // MARK: Clawd art from Claude Code
+
+  /// Looks for Clawd animations in the newest installed Claude Code, once per version (`force`: look again). Each
+  /// becomes clawd/svg-<slug>.png with a manifest entry. True if one is new, so the caller can reload the sprites.
+  @discardableResult static func refreshClawdSVGs(force: Bool = false) -> Bool {
+    guard let newest = ClawdSVG.installs().last else { return false }
+    var manifest = readManifest()
+    guard force || manifest["claudeCode"] as? String != newest.version else { return false }
+    try? FileManager.default.createDirectory(at: clawdDir, withIntermediateDirectories: true)
+    var added = false
+    for found in ClawdSVG.find(in: newest.binary) {
+      let words = found.title.lowercased().split { !$0.isLetter && !$0.isNumber }.dropFirst()   // (drops "clawd")
+      let name = "svg-" + words.joined(separator: "-")
+      guard let strip = ClawdSVG.render(found.svg) else {
+        log("\(name): skipped — \"\(found.title)\" uses SVG features the renderer doesn't draw")
+        continue
+      }
+      guard writePNG(strip.image, to: clawdDir.appendingPathComponent("\(name).png")) else { continue }
+      if manifest[name] == nil {
+        added = true
+        log("new Clawd animation in Claude Code \(newest.version): \(found.title) (\(strip.count) frames)")
+      }
+      manifest[name] = ["frame": [strip.frameSize.w, strip.frameSize.h], "count": strip.count, "scale": 2,
+                        "delays_ms": Array(repeating: strip.delayMS, count: strip.count),
+                        "anchor": Double(strip.anchor), "baseline": Double(strip.baseline), "title": found.title]
+    }
+    manifest["claudeCode"] = newest.version
+    if let json = try? JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]) {
+      try? json.write(to: manifestURL, options: .atomic)
+    }
+    return added
   }
 
   /// A short found/missing report, for `--build-sprites`.

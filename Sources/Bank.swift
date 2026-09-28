@@ -13,6 +13,9 @@ final class Bank {
   let cCloudIntro, cCloudMount, cCloudRide, cCloudDismount: Clip
   let cRaceIn, cRaceDrive, cRaceOut: Clip
   let cWorkIn, cWorkLoop, cWorkOut: Clip
+  // Clawd art that ships inside Claude Code (see ClawdSVG): cooking, and any other animation it finds (idle habits).
+  let cCook: Clip?
+  let cExtras: [Clip]
   // Codex
   let xIdle, xIdleCalm, xRunR, xRunL, xWave, xJump, xFailed, xWaiting, xWork, xReview, xSleep: Clip
   let xLook: [Clip]
@@ -35,15 +38,28 @@ final class Bank {
       }
       let delays = (m["delays_ms"] as? [Int]) ?? Array(repeating: 83, count: count)
       let frames = (0..<count).map { sheet.cropping(to: CGRect(x: $0 * size[0], y: 0, width: size[0], height: size[1]))! }
-      // Every clip starts on the standing pose, so its first frame tells us where Clawd's center is.
-      let anchor = frames.lazy.compactMap(SheetLoader.contentBox).first?.midX ?? CGFloat(size[0]) / 2
-      return Clip(frames: frames, durations: delays.map { Double($0) / 1000 }, size: CGSize(width: size[0], height: size[1]),
-                  anchorX: anchor, baseline: 0)
+      // Pixels per point: 1 for the GIF strips, 2 for Claude Code's art (drawn finer so the stirring spoon turns smoothly).
+      let scale = CGFloat(m["scale"] as? Double ?? 1)
+      // Every GIF clip starts on the standing pose, so its first frame tells us where Clawd's center is; Claude Code's
+      // scenes say where he stands.
+      let anchor = (m["anchor"] as? Double).map { CGFloat($0) }
+        ?? frames.lazy.compactMap(SheetLoader.contentBox).first?.midX ?? CGFloat(size[0]) / 2
+      return Clip(frames: frames, durations: delays.map { Double($0) / 1000 },
+                  size: CGSize(width: CGFloat(size[0]) / scale, height: CGFloat(size[1]) / scale),
+                  anchorX: anchor, baseline: CGFloat(m["baseline"] as? Double ?? 0))
     }
     let crab = strip("crabwalking", need: 20), waving = strip("waving", need: 16), cloud = strip("cloud-once", need: 62)
     let race = strip("racingcar", need: 48), laptop = strip("laptop", need: 43)
     var lurk = strip("lurking", need: 1)
     hasClawd = missing.allSatisfy { $0 == "laptop" }   // the laptop has a fallback below
+    let art = manifest.keys.filter { $0.hasPrefix("svg-") }.sorted().compactMap { name -> (title: String, clip: Clip)? in
+      guard let title = (manifest[name] as? [String: Any])?["title"] as? String,
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(name).png").path) else { return nil }
+      return (title, strip(name, need: 1))
+    }
+    let cooks = { (t: String) in ["cook", "stir", "pot"].contains { t.lowercased().contains($0) } }
+    cCook = art.first { cooks($0.title) }?.clip
+    cExtras = art.filter { !cooks($0.title) }.map(\.clip)
     lurk.anchorX = 0  // peeks in from its left edge
 
     // Expression variants, pixel-edited from the standing frame (crop coords: eyes are 2×2 at x 6/16, y 3).

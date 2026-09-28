@@ -29,6 +29,7 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | `Sources/Activity.swift` | `ActivityMonitor` / `AgentState`: is each app open, is its agent busy (CPU of its process tree, or an open turn in its session log), is it in ultra / ultracode (`CodexUltra`, `ClaudeUltra`) |
 | `Sources/Usage.swift` | `UsageMonitor` / `UsageLevels`: reads local plan-limit data on a background queue and hides expired windows |
 | `Sources/AssetCache.swift` | Builds `~/Library/Application Support/TouchBarBuddies/sprites` from claude.ai GIFs, Claude.app and ChatGPT.app; Codex sheets are in `codex/codex.webp` and `codex/pets/<id>.webp` |
+| `Sources/ClawdSVG.swift` | Clawd art that ships inside Claude Code: finds `<svg>…<title>Clawd …` in the newest installed `claude` binary, and a tiny SVG + SMIL interpreter (rects, straight-line paths, `animate` / `animateTransform`) that renders one loop into a strip. Refuses anything outside that subset |
 | `Sources/Asar.swift` | Reads single files out of an Electron `app.asar` (the Codex pet sheets live in one) |
 | `Sources/AppLauncher.swift` | Opens Claude / ChatGPT on their coding screens and tiles their windows (Accessibility) |
 | `Sources/SystemControls.swift` | What the buttons do: brightness, volume, mute, keyboard light, media keys, Mission Control, sleep, lock |
@@ -66,7 +67,8 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   (`facesRight`). Codex has separate left/right run rows.
 - **Bank** (`Bank.swift`): the named clips, e.g. `cStand cBlink cLookL cLookR cHappy cLoaf cSquat cScuttle
   cWave cLurk cCloudMount cCloudRide cCloudDismount cRaceIn cRaceDrive cRaceOut cWorkIn cWorkLoop cWorkOut`
-  for Clawd and `xIdle xRunR xRunL xWave xJump xFailed xWaiting xWork xReview xSleep codexLook(degrees:)`
+  for Clawd, plus `cCook` / `cExtras` from Claude Code's own art (optional: nil / empty when it isn't installed),
+  and `xIdle xRunR xRunL xWave xJump xFailed xWaiting xWork xReview xSleep codexLook(degrees:)`
   for Codex. The top of `Bank` is the current list. Codex's look frames at exactly 90° / 270° are profiles (his
   face barely shows); 67.5° / 292.5° read better as "looking right / left".
 - **Buddy** (`Scene.swift`): `x`, `hop`, `facingLeft`, `pocket`, `state` (an `AgentState`), `base`
@@ -137,6 +139,13 @@ StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects 
   was doing for the other one, and brings the next game forward. When the limit resets and its agent is still busy,
   it goes back to work. `usageLevels`' `didSet` re-runs `act`. Try it with `limit-claude` / `limit-codex` (each
   flips that plan between 100% and 0%).
+- **Claude Code's own Clawd art:** `AssetCache.refreshClawdSVGs` scans the newest installed Claude Code (the CLI's
+  `~/.local/share/claude/versions/*` and the Claude app's `claude-code/*`) once per version: at launch, every 6 hours
+  (`AppDelegate.checkForNewClawdArt`, which reloads the sprites if something's new) and in `--build-sprites`. Each animated
+  Clawd SVG becomes `clawd/svg-<slug>.png` (2 px per point, `scale`/`anchor`/`baseline` in the manifest). "Clawd stirs a
+  steaming pot" is `bank.cCook`: about a third of Clawd's work sessions are cooking ones (`Buddy.cooking`; `workIn` /
+  `workOut` light the stove and put it out). Any other one lands in `bank.cExtras` and becomes an idle habit (`showOff`),
+  so new art shows up without code changes. Commands: `cook` (next session cooks, plus a taste now), `show-off`.
 - **Busy Claude sessions:** Claude Code writes `~/.claude/sessions/<pid>.json` with `status` busy/idle for every
   running session; `ClaudeUltra.busySessions` reads those, and `ActivityMonitor` ignores the CPU of any `claude`
   process that has one (idle sessions tick over at ~1% each, and a few of them used to add up to "working"). CPU
