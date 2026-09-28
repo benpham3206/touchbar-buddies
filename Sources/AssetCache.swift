@@ -419,10 +419,14 @@ enum AssetCache {
     return box.value
   }
 
+  /// Encodes in memory, then swaps the file in whole: a Refresh that loads the sprites during a rebuild must never
+  /// read half a PNG (the buddy would vanish).
   private static func writePNG(_ img: CGImage, to url: URL) -> Bool {
-    guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { return false }
+    let data = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { return false }
     CGImageDestinationAddImage(dest, img, nil)
-    return CGImageDestinationFinalize(dest)
+    guard CGImageDestinationFinalize(dest) else { return false }
+    return (try? (data as Data).write(to: url, options: .atomic)) != nil
   }
 
   private static func readManifest() -> [String: Any] {

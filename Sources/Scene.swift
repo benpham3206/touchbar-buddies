@@ -154,7 +154,7 @@ struct Projectile {
 // MARK: - Scene
 
 final class Scene {
-  var bank: Bank                       // swapped by "Rebuild Sprites"
+  var bank: Bank { didSet { contentTops.removeAll() } }   // swapped by "Rebuild Sprites" (new images: measure again)
   let clawd = Buddy(.clawd)
   let codex = Buddy(.codex)
   /// The plans' usage. A buddy whose plan is used up puts its work away and plays until the limit resets.
@@ -177,7 +177,7 @@ final class Scene {
   ]
 
   private var particles: [Particle] = []
-  private var contentTops: [ObjectIdentifier: CGFloat] = [:]   // see contentTop
+  private var contentTops: [ObjectIdentifier: (image: CGImage, top: CGFloat)] = [:]   // see contentTop
   private var projectiles: [Projectile] = []
   private var timers: [(at: Double, game: Int, run: () -> Void)] = []
   private var interacting = false
@@ -648,6 +648,14 @@ final class Scene {
       cookNext = true
       if let cook = bank.cCook { habit(b) { [Step(clip: cook, loop: true, hold: cook.total * 2, face: b.x + 1)] } }
     case "show-off": habit(b) { showOff(b) }
+    case "state":   // what the scene thinks, in the log (for "the buddies vanished" reports)
+      for x in [clawd, codex] {
+        NSLog("[state] %@: sprites %@, pocket %@, x %.1f, %@ base %@, queue %d, playing %@, benched %@, drawn %@",
+              "\(x.who)", has(x) ? "yes" : "NO", NSStringFromRect(x.pocket), x.x, x.state.present ? "present" : "absent",
+              "\(x.base)", x.queue.count + (x.step == nil ? 0 : 1), x.playing ? "yes" : "no", x.benched ? "yes" : "no",
+              NSStringFromRect(x.drawnRect))
+      }
+      NSLog("[state] usage bars %@, levels %@, game %@", showUsageBars ? "on" : "off", "\(usageLevels)", interacting ? "on" : "off")
     case "tinker-clawd": habit(b) { tinker(b) }
     case "codex-rows": habit(a) { self.previewCodexRows() }
     case "cheer-visit":   // the idle one visits the busy one
@@ -1675,10 +1683,11 @@ final class Scene {
   private func contentTop(_ clip: Clip, _ i: Int) -> CGFloat {
     let img = clip.frames[min(i, clip.frames.count - 1)]
     let key = ObjectIdentifier(img)
-    if let top = contentTops[key] { return top }
+    // (Keyed by address, so check it's really this image: a freed frame's address can be reused by a new one.)
+    if let known = contentTops[key], known.image === img { return known.top }
     let box = SheetLoader.contentBox(img) ?? .zero
     let top = (CGFloat(img.height) - box.minY) * clip.size.height / CGFloat(img.height) - clip.baseline
-    contentTops[key] = top
+    contentTops[key] = (img, top)
     return top
   }
 

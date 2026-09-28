@@ -254,6 +254,9 @@ Accessibility state, how many late frames were logged, and the last log lines. P
 (drawing one frame took too long; look at what was on screen). Don't block the main thread: slow work
 (files, process scans, CoreAudio) belongs on a background queue, with results handed back to main.
 
+If the buddies vanish, `./tbb send state` logs what the scene thinks (`[state]` lines: sprites loaded per buddy,
+pocket rects, positions, queue, usage levels), which tells a sprite problem from a layout one.
+
 `./tbb logs` follows `~/Library/Logs/TouchBarBuddies.log`. The LaunchAgent and `./tbb run` send the app's
 output there. Sprite building logs `[sprites] …` lines. `TBB_DEBUG=1 ./tbb run` also logs the
 busy/idle sampling every second (`[activity] …`). `TBB_SPRITES_DIR=/some/dir` points the app at another

@@ -398,4 +398,5 @@ if isatty(STDERR_FILENO) == 0 {
   freopen(log, "a", stderr)
   freopen(log, "a", stdout)
 }
+setvbuf(stdout, nil, _IOLBF, 0)   // a line at a time: the [sprites] lines used to reach the log long after the fact
 app.run()
