@@ -655,7 +655,8 @@ let codexWindow = CGRect(x: display.minX + 14, y: windowTop, width: windowW, hei
 let claudeWindow = CGRect(x: display.maxX - 14 - windowW, y: windowTop, width: windowW, height: windowH)
 let titleBarH: CGFloat = 32
 
-let codeFont = mono(12.5), codeBold = mono(12.5, .semibold)
+// 16 pt: the README GIF shows the frame at 2/3 size, and 12.5 pt code was a blur there. (45 characters fit a window.)
+let codeFont = mono(16), codeBold = mono(16, .semibold)
 let dim = white(0.45), text = white(0.9)
 
 
@@ -733,15 +734,15 @@ func drawChrome(_ ctx: CGContext, _ r: CGRect, title: String, body: CGColor, bar
   for (k, c) in [rgb(255, 95, 87), rgb(254, 188, 46), rgb(40, 200, 64)].enumerated() {
     fill(ctx, CGPath(ellipseIn: CGRect(x: r.minX + 14 + CGFloat(k) * 20, y: r.minY + 10, width: 12, height: 12), transform: nil), c)
   }
-  drawCentered(ctx, [Span(title, white(0.75), sans(13, .semibold))], cx: r.midX, baseline: r.minY + 21)
+  drawCentered(ctx, [Span(title, white(0.75), sans(15, .semibold))], cx: r.midX, baseline: r.minY + 22)
   stroke(ctx, rounded(r.insetBy(dx: 0.5, dy: 0.5), 12), white(0.12), 1)
 }
 
 /// Lines of a transcript, newest at the bottom, clipped to `area`.
-func drawTranscript(_ ctx: CGContext, _ lines: [[Span]], in area: CGRect, lineH: CGFloat = 19) {
+func drawTranscript(_ ctx: CGContext, _ lines: [[Span]], in area: CGRect, lineH: CGFloat = 24) {
   let fit = Int(area.height / lineH)
   for (k, l) in lines.suffix(fit).enumerated() {
-    draw(ctx, makeLine(l), x: area.minX, baseline: area.minY + lineH * CGFloat(k) + 14)
+    draw(ctx, makeLine(l), x: area.minX, baseline: area.minY + lineH * CGFloat(k) + 18)
   }
 }
 
@@ -759,7 +760,7 @@ func drawCodexWindow(_ ctx: CGContext, _ t: Double) {
     stroke(ctx, rounded(badge.insetBy(dx: 0.5, dy: 0.5), 16), white(0.14), 1)
     drawCentered(ctx, [Span(">_", white(0.92), mono(26, .bold))], cx: badge.midX, baseline: badge.midY + 9)
     drawCentered(ctx, [Span("What should we build?", white(0.92), sans(24, .semibold))], cx: r.midX, baseline: badge.maxY + 44)
-    drawCentered(ctx, [Span("~/touchbar-buddies", white(0.4), mono(13))], cx: r.midX, baseline: badge.maxY + 70)
+    drawCentered(ctx, [Span("~/touchbar-buddies", white(0.45), mono(16))], cx: r.midX, baseline: badge.maxY + 72)
   }
 
   // Prompt box.
@@ -767,8 +768,8 @@ func drawCodexWindow(_ ctx: CGContext, _ t: Double) {
   fill(ctx, rounded(box, 16), white(0.05))
   stroke(ctx, rounded(box.insetBy(dx: 0.5, dy: 0.5), 16), white(0.15), 1)
   let typed = typedPrompt("codex", t)
-  var spans = [Span(">_  ", codexLight, mono(15, .bold))]
-  if let typed { spans.append(Span(typed, white(0.95), sans(15))) } else { spans.append(Span("Ask Codex to build something", white(0.38), sans(15))) }
+  var spans = [Span(">_  ", codexLight, mono(18, .bold))]
+  if let typed { spans.append(Span(typed, white(0.95), sans(18))) } else { spans.append(Span("Ask Codex to build something", white(0.38), sans(18))) }
   let line = makeLine(spans)
   draw(ctx, line, x: box.minX + 18, baseline: box.midY + 5)
   if typed != nil && caretOn(t) {
@@ -782,7 +783,7 @@ func drawCodexWindow(_ ctx: CGContext, _ t: Double) {
   guard started, let on else { return }
   // Transcript: the request, then Codex's work streaming in.
   let ask = event("prompt", "codex")?.text ?? ""
-  let askLine = makeLine([Span(ask, white(0.95), sans(14))])
+  let askLine = makeLine([Span(ask, white(0.95), sans(17))])
   let bubble = CGRect(x: r.maxX - 16 - width(askLine) - 28, y: r.minY + titleBarH + 16, width: width(askLine) + 28, height: 34)
   faded(ctx, clamp01(CGFloat(t - on) / 0.2)) {
     fill(ctx, rounded(bubble, 14), white(0.09))
@@ -810,25 +811,25 @@ func drawClaudeWindow(_ ctx: CGContext, _ t: Double) {
   // Claude Code's welcome box.
   let welcome = CGRect(x: r.minX + 16, y: r.minY + titleBarH + 14, width: r.width - 32, height: 92)
   stroke(ctx, rounded(welcome, 8), clawdOrange, 1.5)
-  draw(ctx, makeLine([Span("✻ ", clawdOrange, mono(14, .bold)), Span("Welcome to Claude Code", white(0.95), mono(14, .bold))]),
+  draw(ctx, makeLine([Span("✻ ", clawdOrange, mono(17, .bold)), Span("Welcome to Claude Code", white(0.95), mono(17, .bold))]),
        x: welcome.minX + 16, baseline: welcome.minY + 28)
-  draw(ctx, makeLine([Span("/help for help, /status for your setup", white(0.45), mono(12.5))]), x: welcome.minX + 16, baseline: welcome.minY + 55)
-  draw(ctx, makeLine([Span("cwd: ~/touchbar-buddies", white(0.45), mono(12.5))]), x: welcome.minX + 16, baseline: welcome.minY + 76)
+  draw(ctx, makeLine([Span("/help for help, /status for your setup", white(0.5), mono(15))]), x: welcome.minX + 16, baseline: welcome.minY + 58)
+  draw(ctx, makeLine([Span("cwd: ~/touchbar-buddies", white(0.5), mono(15))]), x: welcome.minX + 16, baseline: welcome.minY + 81)
 
   // Prompt box. The block caret sits after the "> ", with the placeholder just past it.
   let box = CGRect(x: r.minX + 16, y: r.maxY - 16 - 46, width: r.width - 32, height: 46)
   stroke(ctx, rounded(box, 8), white(0.3), 1)
   let typed = typedPrompt("clawd", t)
-  let mark = makeLine([Span("> ", white(0.8), mono(14, .bold))])
+  let mark = makeLine([Span("> ", white(0.8), mono(17, .bold))])
   draw(ctx, mark, x: box.minX + 14, baseline: box.midY + 5)
   let textX = box.minX + 14 + width(mark)
   var caretX = textX
   if let typed {
-    let l = makeLine([Span(typed, white(0.95), mono(14))])
+    let l = makeLine([Span(typed, white(0.95), mono(17))])
     draw(ctx, l, x: textX, baseline: box.midY + 5)
     caretX = textX + width(l) + 1
   } else if !started {
-    draw(ctx, makeLine([Span("Try \"refactor the scene\"", white(0.35), mono(14))]), x: textX + 12, baseline: box.midY + 5)
+    draw(ctx, makeLine([Span("Try \"refactor the scene\"", white(0.35), mono(17))]), x: textX + 12, baseline: box.midY + 6)
   }
   if (typed != nil || !started) && caretOn(t) {
     ctx.setFillColor(white(0.85))
@@ -1267,7 +1268,7 @@ func drawCaptions(_ ctx: CGContext, _ t: Double) {
     guard let s = e.text, let dur = e.dur else { continue }
     let a = envelope(t, e.t, e.t + dur, 0.35, 0.35)
     guard a > 0 else { continue }
-    drawPill(ctx, makeLine([Span(s, white(0.97), sans(27, .semibold))]), cy: captionY + 27 + 8 * (1 - a), height: 54, alpha: a, pad: 26)
+    drawPill(ctx, makeLine([Span(s, white(0.97), sans(36, .bold))]), cy: captionY + 35 + 8 * (1 - a), height: 70, alpha: a, pad: 34)
   }
 }
 
@@ -1607,7 +1608,7 @@ if args[3] == "--stills" {
 let mp4URL = URL(fileURLWithPath: args[3])
 let gifURL = args.count > 4 ? URL(fileURLWithPath: args[4]) : nil
 let gifStep = 3                    // every 3rd frame → 10 fps (the whole video stays around 4 MB)
-let gifSize = CGSize(width: 960, height: 540)
+let gifSize = CGSize(width: 1280, height: 720)   // the README shows it ~900 px wide: the extra pixels keep text sharp on Retina
 
 func videoSettings() -> [String: Any] {
   [

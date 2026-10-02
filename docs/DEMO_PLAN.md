@@ -1,7 +1,7 @@
 # Demo video
 
 **Status:** feedback items 1 and 2 are done. `docs/demo.mp4` (1920×1080, 30 fps, H.264 with AAC, about 32 s)
-and `docs/demo.gif` (960×540, 15 fps, a 10 s silent highlight) are in the README:
+and `docs/demo.gif` (1280×720, 10 fps, the whole video, silent) are in the README:
 `[![30-second demo](docs/demo.gif)](docs/demo.mp4)`.
 
 ```
