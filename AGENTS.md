@@ -10,7 +10,7 @@ Touch Bar's Expanded Control Strip with a faithful copy of it. The copy's first 
 "pockets" for two animated mascots: the Codex pet on the left and Clawd, Claude Code's pixel crab, on
 the right. Private Touch Bar calls (`TouchBarPrivate.swift`) put one full-width custom view, `StripView`,
 on the bar. `StripView` draws the buttons and hands the pockets to a `Scene` with two `Buddy`s.
-`ActivityMonitor` checks once a second whether Claude and Codex are open and busy. `Scene` turns those
+`ActivityMonitor` checks every few seconds (interval in `Activity.swift`) whether Claude and Codex are open and busy. `Scene` turns those
 states, plus touches and debug commands, into queued `Step`s (play a clip, walk somewhere, hop), along
 with particles and thrown things. The artwork is never in the repo: on first launch `AssetCache` builds a
 sprite cache from the user's own installed apps and the public claude.ai GIFs, and `Bank` cuts it into
@@ -37,7 +37,7 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 | `Sources/Icons.swift` | Button glyphs: SF Symbols plus a few shapes traced from the real bar |
 | `Sources/TouchBarPrivate.swift` | The private DFRFoundation / NSTouchBar calls that let an app replace the Control Strip |
 | `Sources/Render.swift` | `--render`: draws the Touch Bar offscreen to a GIF, a PNG filmstrip, or a folder of frames + `timeline.json` |
-| `tbb` | Helper for trying changes: `run`, `send`, `render`, `shot`, `logs`, `sprites`, `commands` |
+| `tbb` | Helper for trying changes. `./tbb` with no arguments lists its commands. `./tbb verify` is the check to run before calling a change done |
 | `build.sh` | `swiftc` to a universal `build/TouchBarBuddies.app`, signed with the user's "TouchBarBuddies Local" certificate if there is one, ad-hoc otherwise (`--native`: this Mac's CPU only, faster) |
 | `tools/claude-statusline.sh` | Run by the user: `on` / `off` sets Claude Code's status line to `TouchBarBuddies --claude-statusline`, which saves Claude's live usage for Clawd's bar. Agents don't run it |
 | `tools/make-signing-cert.sh` | Run by the user, once: a self-signed code-signing certificate in their login keychain, so the Accessibility permission survives rebuilds. Agents don't run it |
@@ -49,7 +49,7 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 ## How it fits together
 
 ```
-ActivityMonitor (every 2 s) ── AgentState (open? busy? ultra?) ──▶ Scene.setState ──▶ arrive / fallAsleep / startWork / finishWork
+ActivityMonitor (timer) ────── AgentState (open? busy? ultra?) ──▶ Scene.setState ──▶ arrive / fallAsleep / startWork / finishWork
 UsageMonitor (every 45 s, background) ──▶ UsageLevels ──▶ the two usage bars in Scene
 StripView touches ──▶ Scene.tap / longPress                 (buttons ──▶ StripView.fire ──▶ SystemControls)
 ./tbb send <cmd> ──▶ AppDelegate.handle ──▶ Scene.command

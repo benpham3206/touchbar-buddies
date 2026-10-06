@@ -8,7 +8,7 @@ set -euo pipefail
 cd "${0:A:h}"
 
 APP=build/TouchBarBuddies.app
-MIN_MACOS=12.0   # keep in sync with LSMinimumSystemVersion in Info.plist
+MIN_MACOS=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Info.plist)
 ARCHS=(arm64 x86_64)
 [[ ${1:-} == --native ]] && ARCHS=($(uname -m))
 
