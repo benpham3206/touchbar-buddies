@@ -24,6 +24,7 @@ Touch Bar Buddies helper
   ./tbb logs                 follow the app's log
   ./tbb sprites              rebuild the sprite cache from your Claude / ChatGPT apps
   ./tbb doctor               a health report to paste into a bug report (or hand to Claude / Codex)
+  ./tbb verify               build, then render one frame offscreen; exit 0 means both worked
 
 To keep your changes after a restart, install them: ./install.sh
 EOF
@@ -92,6 +93,14 @@ case ${1:-help} in
     if (( ! $# )); then sed -n '/--render </,/^enum/p' "$ROOT/Sources/Render.swift" | sed -e '$d' -e 's|^// \{0,1\}||'; exit 1; fi
     build_if_needed
     "$BIN" --render "$@"
+    ;;
+  verify)
+    out=$(mktemp -d)/verify.png
+    zsh "$ROOT/build.sh" --native
+    [[ -d "$HOME/Library/Application Support/TouchBarBuddies/sprites" ]] || "$BIN" --build-sprites   # first run only
+    "$BIN" --render "$out"
+    [[ -s $out ]] || { print -u2 "verify: render wrote no image"; exit 1; }
+    print "verify: ok ($out)"
     ;;
   shot)
     out=${2:-touchbar.png}
