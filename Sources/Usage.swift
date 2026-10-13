@@ -235,7 +235,13 @@ enum ClaudeUsagePoll {
       return nil
     }
     // "Current session: 65% used · resets …" and "Current week (all models): 10% used · resets …"
-    return (percent(after: "Current session:", in: text), percent(after: "Current week (all models):", in: text))
+    let result = (percent(after: "Current session:", in: text), percent(after: "Current week (all models):", in: text))
+    // Signed out (an expired login), /usage only prints a cost summary: no plan, nothing to show.
+    if result.0 == nil && result.1 == nil {
+      lastFailure = "no plan limits in its answer; is the claude CLI signed in? (run: claude /login)"
+      return nil
+    }
+    return result
   }
 
   private static func percent(after label: String, in text: String) -> Double? {
