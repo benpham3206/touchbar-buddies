@@ -147,6 +147,7 @@ The helper script, if you want to drive it yourself (run it inside the folder):
 ./tbb send toss            # play something right now (./tbb commands lists them all)
 ./tbb render toss.gif --do toss --seconds 10   # record the Touch Bar to a GIF, no Touch Bar needed
 ./tbb logs                 # follow the app's log
+./tbb verify               # build and render one frame: run this before calling a change done
 ./install.sh               # keep your version: it starts at every login
 ```
 
