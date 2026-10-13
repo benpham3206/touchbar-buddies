@@ -32,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     scene.showUsageBars = UserDefaults.standard.object(forKey: Self.showUsageBarsKey) as? Bool ?? true
     scene.onLaunch = { who in AppLauncher.open(who) }
     scene.onFocus = { who in AppLauncher.focus(who) }
+    scene.onUsage = { who in AppLauncher.openUsage(who) }
+    scene.isFrontmost = { who in AppLauncher.isFrontmost(who) }
     strip = StripView(scene: scene)
     // Layer-backed only in the live app: turning layers on boots AppKit's app machinery, which `--render`
     // must avoid so it also works inside sandboxes (like Codex's) that can't register a GUI app.

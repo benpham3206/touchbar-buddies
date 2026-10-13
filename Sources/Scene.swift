@@ -167,6 +167,8 @@ final class Scene {
   var scripted = false
   var onLaunch: ((Who) -> Void)?
   var onFocus: ((Who) -> Void)?
+  var onUsage: ((Who) -> Void)?                  // a tap on a buddy whose app is already in front
+  var isFrontmost: ((Who) -> Bool)?
 
   /// The games by name: Play Together picks one at random, and the menu bar's Play submenu lists them all.
   static let games: [(title: String, command: String)] = [
@@ -547,7 +549,8 @@ final class Scene {
     let b = buddy(who)
     guard has(b) else { return }
     guard b.state.appRunning else { launch(b); return }
-    onFocus?(who)                             // its app comes to the front, as it is (no new session)
+    // Its app in the background comes to the front, as it is (no new session); already in front, its usage page opens.
+    if isFrontmost?(who) == true { onUsage?(who) } else { onFocus?(who) }
     b.taps = b.taps.filter { now - $0 < 1.5 } + [now]
     if b.base == .work || launching(b) {
       // Don't break their focus (or their entrance): a little hop and a heart.

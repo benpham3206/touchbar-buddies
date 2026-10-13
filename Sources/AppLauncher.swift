@@ -39,6 +39,18 @@ enum AppLauncher {
   /// Tapping an awake buddy: bring its app forward as it is (no navigation, and its window stays where you put it).
   static func focus(_ who: Who) { launch(who, withLink: false) }
 
+  /// The buddy's app is the one in front (so a tap has nothing to bring forward).
+  static func isFrontmost(_ who: Who) -> Bool {
+    guard let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return false }
+    return apps(who).contains { $0.bundleID == front }
+  }
+
+  /// The plan's usage page (5-hour and weekly limits), in the browser.
+  static func openUsage(_ who: Who) {
+    let page = who == .codex ? "https://chatgpt.com/codex/settings/usage" : "https://claude.ai/settings/usage"
+    NSWorkspace.shared.open(URL(string: page)!)
+  }
+
   private static func launch(_ who: Who, withLink: Bool) {
     let ws = NSWorkspace.shared
     guard let (app, appURL) = installedApp(who) else {
