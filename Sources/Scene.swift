@@ -580,16 +580,6 @@ final class Scene {
     emit(.bitmap(Sprite.heart, Palette.heart), at: CGPoint(x: b.x + 8, y: 21), vy: 18)
   }
 
-  func longPress(_ who: Who) {
-    let b = buddy(who)
-    guard has(b) else { return }
-    guard b.state.appRunning else { launch(b); return }
-    onFocus?(who)
-    guard b.base != .work, !launching(b) else { return }
-    recall(b)
-    b.enqueue([waveStep(b, toward: b.x - 1)])
-  }
-
   /// Tapping a buddy whose app is closed opens it. Every tap asks again (opening an app that's already on its way
   /// is harmless); the entrance starts once and plays until the app is up.
   private func launch(_ b: Buddy, open: Bool = true) {

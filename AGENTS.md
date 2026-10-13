@@ -51,7 +51,7 @@ sprite cache from the user's own installed apps and the public claude.ai GIFs, a
 ```
 ActivityMonitor (timer) ────── AgentState (open? busy? ultra?) ──▶ Scene.setState ──▶ arrive / fallAsleep / startWork / finishWork
 UsageMonitor (every 45 s, background) ──▶ UsageLevels ──▶ the two usage bars in Scene
-StripView touches ──▶ Scene.tap / longPress                 (buttons ──▶ StripView.fire ──▶ SystemControls)
+StripView touches ──▶ Scene.tap                             (buttons ──▶ StripView.fire ──▶ SystemControls)
 ./tbb send <cmd> ──▶ AppDelegate.handle ──▶ Scene.command
 StripView timer (6–60 fps, from Scene.pace) ──▶ Scene.update(now, dt) ──▶ Buddy.update (runs the Step queue), timers, particles
 StripView.draw ──▶ buttons, then Scene.draw ──▶ Clip.draw + effects ──▶ the Touch Bar

@@ -202,16 +202,11 @@ final class StripView: NSView {
       if case let .buddy(who) = st.target, !st.longFired, !st.moved { held[who] = (key, st.began) }
     }
     if held.count == 2, now - held.values.map(\.began).max()! > 0.8 {
-      for h in held.values { touchStates[h.key]?.longFired = true }   // letting go is then neither a tap nor a long-press
+      for h in held.values { touchStates[h.key]?.longFired = true }   // letting go is then not a tap
       scene.ultraBoost()
     }
 
     for (key, st) in touchStates {
-      // Long-press a buddy → bring its app forward.
-      if case let .buddy(who) = st.target, !st.longFired, !st.moved, now - st.began > 0.6, held.count < 2 {
-        touchStates[key]?.longFired = true
-        scene.longPress(who)
-      }
       // Holding a keyboard-backlight button repeats, like the hardware keys.
       if case let .button(i) = st.target, pressed == i, [.keyboardDown, .keyboardUp].contains(buttons[i].action),
          now - st.began > 0.45, now - st.lastRepeat > 0.11 {
